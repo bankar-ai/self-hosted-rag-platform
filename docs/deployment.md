@@ -65,8 +65,24 @@ that hits the RAG pipeline produces a trace with the hand-written pipeline spans
 `llm.generate`) nested under the FastAPI request span -- this is the fastest way to see which stage
 was slow or failed for a real production request, without SSHing in to read raw journald output.
 
-Metrics and application logs are **not** exported this way yet (deliberately deferred, see
-ERP-039) -- this covers traces only.
+## Application logs (Grafana Cloud)
+
+ERP-039 extends the same Grafana Cloud stack to application logs, in-process -- no separate
+log-shipping agent (Alloy/Promtail), which would be another always-running process competing for
+the VM's tight RAM budget. `configure_logging()` (`app/core/logging_config.py`) attaches an OTLP
+`LoggingHandler` alongside the existing stdout handler, reusing the same `OTEL_EXPORTER_OTLP_*` env
+vars and protocol-selection logic as the trace exporter above. Measured live: this added no
+detectable memory overhead (uvicorn RSS and system-wide available memory were unchanged before vs
+after deploying it).
+
+**To look at live logs**: same Grafana Cloud stack (`microstarfish1843`) -> Explore -> the
+**Loki** datasource (`grafanacloud-microstarfish1843-logs`) -> filter by
+`service_name="self-hosted-rag-platform"`. Each log line carries `trace_id`/`span_id` fields and a
+"Links -> traceID" affordance that pivots straight to the matching trace in Tempo -- the same
+log-to-trace correlation `TraceIdFilter` was built for, now working against the live backend.
+
+Metrics export is **not** wired up yet (the current Prometheus exporter is pull-based, and the VM
+has nothing to scrape it -- not yet ticketed).
 
 ## Cross-project infrastructure options
 

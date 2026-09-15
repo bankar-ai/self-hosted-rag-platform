@@ -67,6 +67,26 @@ Living summary of what exists in this repository right now. Update in place as s
   full suite 369 passed (real Postgres/Redis/Jaeger). Session log:
   `.ai/sessions/2026-09-15-grafana-cloud-traces.md`.
 
+- **Live deployment's application logs now also export to Grafana Cloud (ERP-039, 2026-09-15)**:
+  extends ERP-038's stack to logs, in-process -- `configure_logging()`
+  (`app/core/logging_config.py`) attaches an OTLP `LoggingHandler` alongside the existing stdout
+  handler, via a new `_build_log_exporter()` mirroring `app.core.telemetry`'s protocol-selection
+  pattern (same `OTEL_EXPORTER_OTLP_*` env vars, no new ones, no new Grafana Cloud token -- the
+  existing token's scope already covers logs). Chose in-process over a log-shipping agent
+  (Alloy/Promtail) based on **measured** evidence, not assumption, per the ticket's explicit
+  requirement: uvicorn RSS and system-wide available memory were unchanged before vs after
+  deploying (~267-274MB RSS, ~365-378MB available both times) -- a second export path on an
+  already-running process costs effectively nothing, whereas a separate agent would compete for the
+  same tight budget that required ERP-037's lazy-docling-import fix just to fit the app alone.
+  Verified end-to-end with real traffic: a live `POST /retrieval/query` produced log lines in
+  Grafana Cloud's Loki (`grafanacloud-microstarfish1843-logs`), each carrying `trace_id`/`span_id`
+  fields plus a "Links -> traceID" affordance pivoting straight to the matching trace in Tempo --
+  confirming `TraceIdFilter`'s log-to-trace correlation design now works against the live backend,
+  not just local Jaeger. Verified: ruff/mypy clean, full suite 372 passed, 96.59% coverage (100% on
+  `logging_config.py` itself). Docs: `docs/deployment.md`'s new "Application logs" section;
+  `D:\github-projects\gcp-deployment-tracker.md` updated. This closes out both halves of the
+  observability-for-the-live-deployment gap named after ERP-037 (ERP-038 traces + ERP-039 logs).
+
 ## Next Planned Work
 
 - Re-run the ERP-029 retrieval-quality evaluation harness against live Ollama (now reachable both locally and via the Modal deployment) to confirm no Precision@k/Recall@k/MRR regression from ERP-031's per-owner FAISS partitioning -- still unconfirmed.
@@ -75,5 +95,6 @@ Living summary of what exists in this repository right now. Update in place as s
 - Additional OIDC providers beyond Google (Microsoft Entra ID, Okta, self-hosted Keycloak/Authentik) are supported by ERP-032's provider-agnostic design but not concretely verified end-to-end yet.
 - Admin cross-user data visibility — the `admin` role is currently a distinction only (checked, but no elevated privilege); every ownership check is a bare `owner_id` equality with no admin bypass. Deferred rather than added untested at the tail of ERP-026 (surfaced by the final whole-branch review).
 - Self-service admin account creation — deliberately not exposed via `POST /auth/register`; the first `admin` user is created via a seed/manual DB step, deferred for future follow-up. ERP-027's admin endpoints still depend on this manual step to create the first admin.
-- **ERP-039 (Backlog)**: ship the live deployment's application logs to Grafana Cloud, the deliberately-deferred second half of ERP-038's scope (traces only). Metrics export (current Prometheus exporter is pull-based; the VM has nothing to scrape it) is not yet ticketed.
-- Otherwise, no non-deferred work remains. Both halves of "Evaluation" are done (ERP-029 retrieval, ERP-030 generation); ERP-012's three deferred retrieval follow-ups, generation, conversation memory, streaming, and observability were all closed out in prior sessions. Everything left is one of the explicitly-deferred items above, ERP-039, or the future LLMOps & Evaluation Platform (a separate repo, not work here).
+- Metrics export to Grafana Cloud is not yet ticketed (current Prometheus exporter is pull-based; the VM has nothing to scrape it, and there's no established approach yet -- remote-write agent vs push-based OTLP metrics).
+- A delete-user path (admin or self-service) would be useful -- ERP-038/ERP-039's live verifications each left one harmless throwaway test user row in the live Neon database with no way to remove it via the API.
+- Otherwise, no non-deferred work remains. Both halves of "Evaluation" are done (ERP-029 retrieval, ERP-030 generation); both halves of live-deployment observability are done (ERP-038 traces, ERP-039 logs); ERP-012's three deferred retrieval follow-ups, generation, conversation memory, streaming, and observability were all closed out in prior sessions. Everything left is one of the explicitly-deferred items above, or the future LLMOps & Evaluation Platform (a separate repo, not work here).
