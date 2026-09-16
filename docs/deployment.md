@@ -81,8 +81,20 @@ after deploying it).
 "Links -> traceID" affordance that pivots straight to the matching trace in Tempo -- the same
 log-to-trace correlation `TraceIdFilter` was built for, now working against the live backend.
 
-Metrics export is **not** wired up yet (the current Prometheus exporter is pull-based, and the VM
-has nothing to scrape it -- not yet ticketed).
+## Metrics (Grafana Cloud)
+
+ERP-042 extends the same stack to metrics. The existing pull-based `PrometheusMetricReader`
+(backing the local `/metrics` endpoint `docker-compose`'s Prometheus service scrapes) is kept for
+local dev, and a push-based `PeriodicExportingMetricReader` over OTLP is added alongside it --
+same protocol-selection pattern (`_build_otlp_metric_exporter()` in `app/core/telemetry.py`), same
+`OTEL_EXPORTER_OTLP_*` env vars, no new Grafana Cloud token. This closes the gap traces (ERP-038)
+and logs (ERP-039) left open: hand-written metrics (`embedding_cache_requests_total`,
+`retrieval_cache_requests_total`, `llm_generation_duration_seconds`, `ingestion_jobs_total`) and
+auto-instrumented ones now reach Grafana Cloud without needing a local Prometheus to scrape the VM.
+
+**To look at live metrics**: same Grafana Cloud stack (`microstarfish1843`) -> Explore -> the
+**Prometheus/Mimir** datasource, query by metric name (e.g. `llm_generation_duration_seconds`) or
+filter by `service_name="self-hosted-rag-platform"`.
 
 ## Cross-project infrastructure options
 
