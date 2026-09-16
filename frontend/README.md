@@ -1,32 +1,26 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Vite + React + TypeScript SPA for the Self-Hosted RAG Platform. See
+`docs/superpowers/specs/2026-09-16-web-ui-design.md` for the design and
+`docs/superpowers/plans/2026-09-16-web-ui.md` for how it was built.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```
+cp .env.example .env.local   # set VITE_API_BASE_URL to your local backend, e.g. http://localhost:8000
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Run tests with `npm test`, type-check with `npx tsc -b`.
+
+## Deployment (Vercel)
+
+Import this repo into Vercel, set the project root to `frontend/`, and set the
+`VITE_API_BASE_URL` environment variable to the live backend's URL
+(`https://34-31-5-88.sslip.io` as of this writing). Vercel auto-detects the Vite framework
+preset — no `vercel.json` needed.
+
+The backend must also have this frontend's deployed Vercel origin in its
+`CORS_ALLOWED_ORIGINS` env var (see `app/core/cors.py`), or every request will be blocked by
+the browser regardless of what the API itself would allow.
