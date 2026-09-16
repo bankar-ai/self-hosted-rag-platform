@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from collections.abc import Iterable
 
 from app.auth.repository import create_user
 from app.core.db import get_session_factory
@@ -25,6 +26,14 @@ from app.generation.config import get_generation_settings
 from app.generation.prompt import SYSTEM_PROMPT, build_prompt
 from app.ingestion.schemas import Chunk
 from app.retrieval.service import search
+
+
+def _mean_and_failures(scores: Iterable[float | None]) -> tuple[float, int]:
+    """Return (mean of the non-`None` scores, count of `None`s) -- `0.0`/`0` if `scores` is empty."""
+    scores = list(scores)
+    present = [score for score in scores if score is not None]
+    failures = len(scores) - len(present)
+    return (sum(present) / len(present) if present else 0.0, failures)
 
 
 def run_generation_evaluation(
@@ -111,12 +120,19 @@ def run_generation_evaluation(
             )
         )
 
+    faithfulness_mean, faithfulness_failures = _mean_and_failures(r.faithfulness for r in per_query)
+    relevancy_mean, relevancy_failures = _mean_and_failures(r.answer_relevancy for r in per_query)
+    precision_mean, precision_failures = _mean_and_failures(r.context_precision for r in per_query)
+
     summary = GenerationEvaluationSummary(
         judge=type(judge).__name__,
         num_queries=len(per_query),
-        mean_faithfulness=sum(r.faithfulness for r in per_query) / len(per_query),
-        mean_answer_relevancy=sum(r.answer_relevancy for r in per_query) / len(per_query),
-        mean_context_precision=sum(r.context_precision for r in per_query) / len(per_query),
+        mean_faithfulness=faithfulness_mean,
+        mean_answer_relevancy=relevancy_mean,
+        mean_context_precision=precision_mean,
+        faithfulness_parse_failures=faithfulness_failures,
+        answer_relevancy_parse_failures=relevancy_failures,
+        context_precision_parse_failures=precision_failures,
         per_query=per_query,
     )
 

@@ -21,6 +21,8 @@ Never hardcode API keys, passwords, secrets, or tokens. Always load configuratio
 
 This is enforced automatically, not just a policy statement: a Gitleaks pre-commit hook (`.pre-commit-config.yaml`) blocks commits containing secret-shaped strings, and CI runs the same check as a backstop. After cloning, run `uv run pre-commit install` once to activate the local hook (see ADR-004, ERP-010).
 
+**Full cross-project policy** (real credential storage, periodic full-history scans, what to do when starting a new project): `D:\github-projects\credentials-policy.md`. Real secrets for a live deployment of this repo live in `C:\Users\Pankaj\.credentials\self-hosted-rag-platform-credentials.md` — structurally outside this (and every) repo, never in a tracked file. Periodically, and always after a session that touched live secrets, verify with a full-history scan (not just the pre-commit hook's working-tree check): `gitleaks detect --source . --log-opts="--all"`.
+
 ## Logging
 
 Use structured logging. Never use `print()` inside application code — it's acceptable only for local debugging and must be removed before commit.

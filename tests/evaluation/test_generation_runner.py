@@ -63,6 +63,29 @@ def test_run_generation_evaluation_persists_and_cleans_up(tmp_path):
         assert latest.num_queries == len(GOLDEN_QUERIES)
 
 
+def test_run_generation_evaluation_excludes_none_scores_from_means_and_counts_them(tmp_path):
+    """A judge that can't parse one metric shouldn't drag that metric's mean toward 0.0."""
+
+    class _PartiallyFailingJudge:
+        def score(self, user_input, response, retrieved_contexts):
+            return GenerationScores(faithfulness=None, answer_relevancy=0.8, context_precision=0.7)
+
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=32)
+
+    summary = run_generation_evaluation(
+        judge=_PartiallyFailingJudge(),
+        llm_client=_FakeLLMClient(),
+        embedding_client=_DiscriminatingFakeEmbeddingClient(),
+        faiss_index_store=faiss_index_store,
+    )
+
+    assert summary.mean_faithfulness == 0.0
+    assert summary.faithfulness_parse_failures == len(GOLDEN_QUERIES)
+    assert summary.mean_answer_relevancy == 0.8
+    assert summary.answer_relevancy_parse_failures == 0
+    assert all(r.faithfulness is None for r in summary.per_query)
+
+
 def test_run_generation_evaluation_builds_and_removes_its_own_temp_faiss_index_when_none_injected(
     monkeypatch,
 ):

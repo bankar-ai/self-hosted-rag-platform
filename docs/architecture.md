@@ -12,17 +12,19 @@ The primary objective is to build a modular, scalable, testable and production-r
 
 The platform will later become the foundation for additional repositories including:
 
-- Agentic Insurance Assistant
+- Agentic AI
 - LLMOps & Evaluation Platform
 
 Therefore, maintainability and extensibility are more important than rapid feature development.
 
-**Design constraint for the future LLMOps & Evaluation Platform** (noted 2026-09-06, before that repo exists): it must be a **generalized, standalone platform**, not something built specifically for this RAG platform. Other projects — including this one and the future Agentic Insurance Assistant — should be able to integrate with it as clients (via an API/SDK contract), rather than it being coupled to this codebase's internals. Concretely, this means:
+**Design constraint for the future LLMOps & Evaluation Platform** (noted 2026-09-06, before that repo exists): it must be a **generalized, standalone platform**, not something built specifically for this RAG platform. Other projects — including this one and the future Agentic AI project — should be able to integrate with it as clients (via an API/SDK contract), rather than it being coupled to this codebase's internals. Concretely, this means:
 
-- It lives in its own repository, not as a module inside `enterprise-rag-platform`.
+- It lives in its own repository, not as a module inside `self-hosted-rag-platform`.
 - It exposes a project-agnostic ingestion/tracing API and dataset/test-set management, so any LLM-based project can send it traces and evaluation data, not just RAG pipelines.
 - This repo's own "Evaluation" project goal (`docs/roadmap.md`) should be scoped as a client integration against that future platform where practical, rather than a bespoke one-off evaluation harness built only for this repo — revisit this repo's Evaluation ticket's design once the platform's API contract exists.
 - The platform itself is a multi-subsystem product (tracing/ingestion, dataset management, evaluation runners, experiment tracking, dashboards, possibly prompt versioning) and will need its own decomposition into phased sub-projects when work on it actually starts — don't scope it as a single ticket.
+
+**Shared cross-project infrastructure reference** (noted 2026-09-08, see ADR-008): `D:\github-projects\infrastructure-options.md`, a sibling file outside this repo's git history, tracks researched hosting/compute/database/GPU/LLM-API options evaluated against a "live 2-3 months, then torn down" constraint shared by this repo and the future Agentic AI, PEFT/LoRA, and LLMOps repos. Each future repo should reference that shared file rather than re-deriving its own version. This repo's own deployment execution against it is tracked in `.ai/tickets/ERP-037.md`.
 
 ## Project Goals
 

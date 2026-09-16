@@ -5,6 +5,7 @@ import pytest
 from app.auth import oidc
 from app.auth.service import (
     AccountDisabledError,
+    CannotDeleteSelfError,
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
@@ -12,6 +13,7 @@ from app.auth.service import (
     OidcNotConfiguredError,
     UserNotFoundError,
     complete_oidc_login,
+    delete_user,
     list_all_users,
     login,
     logout,
@@ -167,6 +169,37 @@ def test_revoke_user_sessions_invalidates_refresh_token(auth_settings):
 def test_revoke_user_sessions_raises_for_unknown_user():
     with pytest.raises(UserNotFoundError):
         revoke_user_sessions(uuid.uuid4())
+
+
+def test_delete_user_raises_for_unknown_user():
+    with pytest.raises(UserNotFoundError):
+        delete_user(uuid.uuid4(), acting_admin_id=uuid.uuid4())
+
+
+def test_delete_user_raises_when_deleting_self():
+    admin = register_user("delete-self@example.com", "a-long-enough-password")
+    with pytest.raises(CannotDeleteSelfError):
+        delete_user(admin.id, acting_admin_id=admin.id)
+
+
+def test_delete_user_removes_the_user(auth_settings):
+    user = register_user("delete-me@example.com", "a-long-enough-password")
+
+    delete_user(user.id, acting_admin_id=uuid.uuid4())
+
+    with pytest.raises(InvalidCredentialsError):
+        login("delete-me@example.com", "a-long-enough-password", settings=auth_settings)
+
+
+def test_delete_user_swallows_faiss_index_deletion_failure(monkeypatch):
+    user = register_user("delete-faiss-failure@example.com", "a-long-enough-password")
+
+    def _raise_os_error(self, missing_ok=False):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("pathlib.Path.unlink", _raise_os_error)
+
+    delete_user(user.id, acting_admin_id=uuid.uuid4())  # must not raise
 
 
 def _canned_claims(**overrides) -> dict:

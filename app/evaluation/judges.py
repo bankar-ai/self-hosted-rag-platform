@@ -34,14 +34,35 @@ def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def _parse_score(raw_response: str, metric_name: str) -> float:
+def _parse_score(raw_response: str, metric_name: str) -> float | None:
     match = _SCORE_PATTERN.search(raw_response)
     if match is None:
         logger.warning(
             "Could not parse a numeric score for %s from judge response: %r", metric_name, raw_response
         )
-        return 0.0
+        return None
     return _clamp(float(match.group(1)))
+
+
+def _score_with_retry(
+    llm_client: LLMClient, system_prompt: str, user_prompt: str, metric_name: str
+) -> float | None:
+    """Call `llm_client`, parse a score, and retry once on a parse failure before giving up.
+
+    Returns `None` (not `0.0`) if both attempts fail to parse -- a parse failure is not the same
+    as a judge-assigned low score, and must stay distinguishable from one downstream.
+    """
+    score = _parse_score(llm_client.generate(system_prompt, user_prompt), metric_name)
+    if score is not None:
+        return score
+
+    score = _parse_score(llm_client.generate(system_prompt, user_prompt), metric_name)
+    if score is None:
+        logger.warning(
+            "Judge response for %s was still unparseable after one retry; recording as unavailable, not 0.0",
+            metric_name,
+        )
+    return score
 
 
 _FAITHFULNESS_PROMPT = (
@@ -73,25 +94,32 @@ class OllamaLLMClientJudge:
         self._llm_client = llm_client
 
     def score(self, user_input: str, response: str, retrieved_contexts: list[str]) -> GenerationScores:
-        """Score `response` via three separate judge-LLM calls, one per metric."""
+        """Score `response` via three separate judge-LLM calls, one per metric.
+
+        Each metric is retried once on an unparseable response (see `_score_with_retry`); a
+        metric that still can't be parsed after the retry is `None`, not `0.0`.
+        """
         context = "\n---\n".join(retrieved_contexts)
 
-        faithfulness_raw = self._llm_client.generate(
-            _JUDGE_SYSTEM_PROMPT, _FAITHFULNESS_PROMPT.format(context=context, response=response)
-        )
-        relevancy_raw = self._llm_client.generate(
-            _JUDGE_SYSTEM_PROMPT,
-            _ANSWER_RELEVANCY_PROMPT.format(user_input=user_input, response=response),
-        )
-        precision_raw = self._llm_client.generate(
-            _JUDGE_SYSTEM_PROMPT,
-            _CONTEXT_PRECISION_PROMPT.format(user_input=user_input, context=context),
-        )
-
         return GenerationScores(
-            faithfulness=_parse_score(faithfulness_raw, "faithfulness"),
-            answer_relevancy=_parse_score(relevancy_raw, "answer_relevancy"),
-            context_precision=_parse_score(precision_raw, "context_precision"),
+            faithfulness=_score_with_retry(
+                self._llm_client,
+                _JUDGE_SYSTEM_PROMPT,
+                _FAITHFULNESS_PROMPT.format(context=context, response=response),
+                "faithfulness",
+            ),
+            answer_relevancy=_score_with_retry(
+                self._llm_client,
+                _JUDGE_SYSTEM_PROMPT,
+                _ANSWER_RELEVANCY_PROMPT.format(user_input=user_input, response=response),
+                "answer_relevancy",
+            ),
+            context_precision=_score_with_retry(
+                self._llm_client,
+                _JUDGE_SYSTEM_PROMPT,
+                _CONTEXT_PRECISION_PROMPT.format(user_input=user_input, context=context),
+                "context_precision",
+            ),
         )
 
 

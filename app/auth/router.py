@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from app.auth.dependencies import require_role
 from app.auth.oidc import InvalidOidcStateError, OidcTokenExchangeError, OidcTokenValidationError
 from app.auth.schemas import (
+    CurrentUser,
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
@@ -20,6 +21,7 @@ from app.auth.schemas import (
 )
 from app.auth.service import (
     AccountDisabledError,
+    CannotDeleteSelfError,
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
@@ -27,6 +29,7 @@ from app.auth.service import (
     OidcNotConfiguredError,
     UserNotFoundError,
     complete_oidc_login,
+    delete_user,
     list_all_users,
     refresh_access_token,
     register_user,
@@ -45,9 +48,8 @@ oidc_router = APIRouter(prefix="/auth/oidc", tags=["auth"])
 # (login-CSRF defense). See app/auth/oidc.py's create_oidc_cookie/decode_oidc_cookie.
 _OIDC_STATE_COOKIE = "oidc_state"
 _OIDC_COOKIE_PATH = "/auth/oidc"
-admin_router = APIRouter(
-    prefix="/admin/users", tags=["admin"], dependencies=[Depends(require_role("admin"))]
-)
+_require_admin = require_role("admin")
+admin_router = APIRouter(prefix="/admin/users", tags=["admin"], dependencies=[Depends(_require_admin)])
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -190,3 +192,18 @@ def revoke_sessions(user_id: uuid.UUID) -> None:
         revoke_user_sessions(user_id)
     except UserNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
+
+
+@admin_router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user_endpoint(
+    user_id: uuid.UUID, current_user: CurrentUser = Depends(_require_admin)
+) -> None:
+    """Permanently delete a user and everything they own. Requires the `admin` role. Irreversible."""
+    try:
+        delete_user(user_id, current_user.id)
+    except UserNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
+    except CannotDeleteSelfError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Cannot delete your own account"
+        ) from exc

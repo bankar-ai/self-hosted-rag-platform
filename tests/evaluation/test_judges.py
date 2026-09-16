@@ -42,13 +42,38 @@ def test_ollama_judge_clamps_out_of_range_scores():
     assert scores.context_precision == 0.5
 
 
-def test_ollama_judge_scores_zero_and_warns_on_unparseable_response():
-    client = _StubLLMClient(["I cannot determine a score.", "Score: 0.5", "Score: 0.5"])
+def test_ollama_judge_retries_once_and_uses_the_retry_score_on_first_parse_failure():
+    client = _StubLLMClient(
+        [
+            "I cannot determine a score.",  # faithfulness: first attempt unparseable
+            "Score: 0.6",  # faithfulness: retry succeeds
+            "Score: 0.5",
+            "Score: 0.5",
+        ]
+    )
     judge = OllamaLLMClientJudge(client)
 
     scores = judge.score("q", "a", ["context"])
 
-    assert scores.faithfulness == 0.0
+    assert scores.faithfulness == 0.6
+
+
+def test_ollama_judge_records_none_not_zero_when_still_unparseable_after_retry():
+    client = _StubLLMClient(
+        [
+            "I cannot determine a score.",  # faithfulness: first attempt unparseable
+            "Still no score.",  # faithfulness: retry also unparseable
+            "Score: 0.5",
+            "Score: 0.5",
+        ]
+    )
+    judge = OllamaLLMClientJudge(client)
+
+    scores = judge.score("q", "a", ["context"])
+
+    assert scores.faithfulness is None
+    assert scores.answer_relevancy == 0.5
+    assert scores.context_precision == 0.5
 
 
 def test_ragas_judge_wires_scores_from_each_metric():

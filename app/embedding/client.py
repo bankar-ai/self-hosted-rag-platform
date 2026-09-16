@@ -1,5 +1,6 @@
 """Embedding generation via a local Ollama server, cache-aside in front of Redis."""
 
+import logging
 from typing import Protocol
 
 import ollama
@@ -7,6 +8,8 @@ import ollama
 from app.core.telemetry import get_tracer
 from app.embedding.cache import EmbeddingCache, get_default_embedding_cache
 from app.embedding.config import EmbeddingSettings
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingClient(Protocol):
@@ -32,6 +35,13 @@ class OllamaEmbeddingClient:
         self._client = ollama.Client(host=settings.ollama_host)
         self._model = settings.model
         self._cache: EmbeddingCache = cache if cache is not None else get_default_embedding_cache()
+        logger.info(
+            "Embedding client configured for model=%r at %r -- this must match an installed "
+            "Ollama tag exactly (run `ollama list`, or `uv run python -m app.core.check_models` "
+            "to verify before deploying)",
+            self._model,
+            settings.ollama_host,
+        )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Return one embedding vector per text in `texts`, in the same order.

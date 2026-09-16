@@ -21,6 +21,7 @@ env/
 credentials.json
 
 .worktrees/
+.claude/
 
 # Editors/OS
 .vscode/

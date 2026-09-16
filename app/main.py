@@ -14,7 +14,7 @@ from app.retrieval.router import router as retrieval_router
 
 configure_logging()
 
-app = FastAPI(title="Enterprise RAG Platform")
+app = FastAPI(title="Self-Hosted RAG Platform")
 configure_telemetry(app)
 app.mount("/metrics", make_asgi_app())
 app.include_router(auth_router)

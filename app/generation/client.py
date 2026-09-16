@@ -1,5 +1,6 @@
 """Answer generation via a local Ollama chat model."""
 
+import logging
 import time
 from typing import Iterator, Protocol
 
@@ -7,6 +8,8 @@ import ollama
 
 from app.core.telemetry import get_meter, get_tracer
 from app.generation.config import GenerationSettings
+
+logger = logging.getLogger(__name__)
 
 _duration_histogram = get_meter().create_histogram(
     "llm_generation_duration_seconds", description="Duration of a non-streaming LLM generation call"
@@ -33,6 +36,13 @@ class OllamaLLMClient:
         self._client = ollama.Client(host=settings.ollama_host)
         self._model = settings.model
         self._temperature = settings.temperature
+        logger.info(
+            "Generation LLM client configured for model=%r at %r -- this must match an "
+            "installed Ollama tag exactly (run `ollama list`, or `uv run python -m "
+            "app.core.check_models` to verify before deploying)",
+            self._model,
+            settings.ollama_host,
+        )
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         """Send `system_prompt`/`user_prompt` to Ollama and return the response text."""

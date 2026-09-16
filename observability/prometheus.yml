@@ -2,6 +2,6 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: "enterprise-rag-platform"
+  - job_name: "self-hosted-rag-platform"
     static_configs:
       - targets: ["host.docker.internal:8000"]

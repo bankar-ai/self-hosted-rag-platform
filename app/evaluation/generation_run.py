@@ -27,18 +27,27 @@ def main() -> None:
 
     summary = run_generation_evaluation(judge=judge)
 
+    def _fmt(score: float | None) -> str:
+        return f"{score:.2f}" if score is not None else "N/A"
+
     print(f"Generation evaluation run ({summary.judge}): {summary.num_queries} queries")
     print(f"  Mean Faithfulness:      {summary.mean_faithfulness:.3f}")
     print(f"  Mean Answer Relevancy:  {summary.mean_answer_relevancy:.3f}")
     print(f"  Mean Context Precision: {summary.mean_context_precision:.3f}")
+    print(
+        "  Parse failures (excluded from means above): "
+        f"faithfulness={summary.faithfulness_parse_failures} "
+        f"relevancy={summary.answer_relevancy_parse_failures} "
+        f"precision={summary.context_precision_parse_failures}"
+    )
     print()
     for result in summary.per_query:
         print(f"  {result.query!r}")
         print(f"      answer: {result.answer[:200]}")
         print(
-            f"      faithfulness={result.faithfulness:.2f} "
-            f"relevancy={result.answer_relevancy:.2f} "
-            f"precision={result.context_precision:.2f}"
+            f"      faithfulness={_fmt(result.faithfulness)} "
+            f"relevancy={_fmt(result.answer_relevancy)} "
+            f"precision={_fmt(result.context_precision)}"
         )
 
 

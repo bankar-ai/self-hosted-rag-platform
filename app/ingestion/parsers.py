@@ -3,7 +3,6 @@
 from typing import Any, Literal, cast
 
 import pymupdf4llm
-from docling.document_converter import DocumentConverter
 
 from app.ingestion.config import IngestionSettings
 
@@ -31,7 +30,14 @@ def needs_fallback(fast_pages: list[dict[str, Any]], ocr_text_threshold: int) ->
 
 
 def parse_quality(pdf_path: str) -> list[dict[str, Any]]:
-    """Docling parse (quality path: better tables + OCR). Returns {"text", "page_number"} dicts."""
+    """Docling parse (quality path: better tables + OCR). Returns {"text", "page_number"} dicts.
+
+    Imports `docling` lazily (not at module level) -- it pulls in `torch`/`transformers`, a
+    heavy cost every deployment would otherwise pay at import time even if this fallback path
+    (most documents use the fast path) is never actually reached.
+    """
+    from docling.document_converter import DocumentConverter
+
     converter = DocumentConverter()
     result = converter.convert(pdf_path)
     markdown = result.document.export_to_markdown(page_break_placeholder=_PAGE_BREAK)

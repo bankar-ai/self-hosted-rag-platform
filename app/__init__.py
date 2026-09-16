@@ -1,1 +1,1 @@
-"""Enterprise RAG Platform application package."""
+"""Self-Hosted RAG Platform application package."""
