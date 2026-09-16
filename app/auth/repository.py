@@ -3,10 +3,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.auth.models import OidcIdentityRecord, RefreshTokenRecord, UserRecord
+from app.generation.models import ConversationMessageRecord, ConversationRecord
+from app.ingestion.models import ChunkRecord, DocumentRecord
 
 
 def get_user_by_email(session: Session, email: str) -> UserRecord | None:
@@ -95,3 +97,33 @@ def revoke_refresh_token(session: Session, record: RefreshTokenRecord) -> None:
     """Mark `record` revoked (idempotent). Does not commit."""
     record.revoked_at = datetime.now(timezone.utc)
     session.flush()
+
+
+def delete_user_and_owned_data(session: Session, user_id: uuid.UUID) -> None:
+    """Delete every row `user_id` owns, then the user row itself. Does not commit.
+
+    Order matters: all of these are plain (non-cascading) foreign keys, so children must be
+    deleted before their parents -- mirrors `app.evaluation.repository.cleanup_eval_data`, which
+    does the same thing for eval-run data.
+    """
+    conversation_ids = list(
+        session.scalars(select(ConversationRecord.id).where(ConversationRecord.owner_id == user_id))
+    )
+    if conversation_ids:
+        session.execute(
+            delete(ConversationMessageRecord).where(
+                ConversationMessageRecord.conversation_id.in_(conversation_ids)
+            )
+        )
+    session.execute(delete(ConversationRecord).where(ConversationRecord.owner_id == user_id))
+
+    document_ids = list(
+        session.scalars(select(DocumentRecord.document_id).where(DocumentRecord.owner_id == user_id))
+    )
+    if document_ids:
+        session.execute(delete(ChunkRecord).where(ChunkRecord.document_id.in_(document_ids)))
+    session.execute(delete(DocumentRecord).where(DocumentRecord.owner_id == user_id))
+
+    session.execute(delete(RefreshTokenRecord).where(RefreshTokenRecord.user_id == user_id))
+    session.execute(delete(OidcIdentityRecord).where(OidcIdentityRecord.user_id == user_id))
+    session.execute(delete(UserRecord).where(UserRecord.id == user_id))

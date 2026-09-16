@@ -1,8 +1,10 @@
 """Business logic for registration, login, refresh-token rotation, logout, and OIDC login."""
 
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import NamedTuple, cast
 
 from app.auth import oidc
@@ -14,6 +16,7 @@ from app.auth.repository import (
     create_oidc_user,
     create_refresh_token,
     create_user,
+    delete_user_and_owned_data,
     get_oidc_identity,
     get_refresh_token_by_hash,
     get_user_by_email,
@@ -32,6 +35,10 @@ from app.auth.security import (
     verify_password,
 )
 from app.core.db import get_session_factory
+from app.embedding.config import get_embedding_settings
+from app.embedding.index import OwnerFaissIndexStore
+
+logger = logging.getLogger(__name__)
 
 
 class EmailAlreadyRegisteredError(Exception):
@@ -52,6 +59,10 @@ class AccountDisabledError(Exception):
 
 class UserNotFoundError(Exception):
     """Raised when an admin operation targets an unknown user id."""
+
+
+class CannotDeleteSelfError(Exception):
+    """Raised when an admin attempts to delete their own account."""
 
 
 class OidcNotConfiguredError(Exception):
@@ -222,6 +233,40 @@ def revoke_user_sessions(user_id: uuid.UUID) -> None:
             raise UserNotFoundError(user_id)
         revoke_all_refresh_tokens_for_user(session, user_id)
         session.commit()
+
+
+def _delete_owner_faiss_index(owner_id: uuid.UUID) -> None:
+    """Best-effort delete of `owner_id`'s on-disk FAISS index file (ERP-031), if one exists.
+
+    Not load-bearing: the user and their DB rows are already gone by the time this runs, so a
+    failure here (e.g. a permissions issue) leaves only a harmless orphaned file, not a
+    correctness problem -- logged, not raised.
+    """
+    settings = get_embedding_settings()
+    store = OwnerFaissIndexStore(settings.faiss_index_dir, settings.dimension)
+    try:
+        Path(store.path_for(owner_id)).unlink(missing_ok=True)
+    except OSError:
+        logger.exception("Failed to delete FAISS index file for owner %s", owner_id)
+
+
+def delete_user(user_id: uuid.UUID, acting_admin_id: uuid.UUID) -> None:
+    """Permanently delete `user_id` and every row they own. Irreversible -- no undo.
+
+    Raises `CannotDeleteSelfError` if `user_id == acting_admin_id` (blocks an easy self-lockout
+    footgun). Raises `UserNotFoundError` if `user_id` doesn't exist.
+    """
+    if user_id == acting_admin_id:
+        raise CannotDeleteSelfError(user_id)
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        if get_user_by_id(session, user_id) is None:
+            raise UserNotFoundError(user_id)
+        delete_user_and_owned_data(session, user_id)
+        session.commit()
+
+    _delete_owner_faiss_index(user_id)
 
 
 def _is_oidc_configured(settings: AuthSettings) -> bool:

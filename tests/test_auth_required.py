@@ -60,6 +60,10 @@ def _call_admin_revoke_sessions():
     return client.post(f"/admin/users/{_DUMMY_CONVERSATION_ID}/revoke-sessions")
 
 
+def _call_admin_delete_user():
+    return client.delete(f"/admin/users/{_DUMMY_CONVERSATION_ID}")
+
+
 _PROTECTED_ROUTES = [
     pytest.param(_call_ingestion_pdf, id="POST /ingestion/pdf"),
     pytest.param(_call_ingestion_job_status, id="GET /ingestion/jobs/{job_id}"),
@@ -70,6 +74,7 @@ _PROTECTED_ROUTES = [
     pytest.param(_call_admin_list_users, id="GET /admin/users"),
     pytest.param(_call_admin_update_user, id="PATCH /admin/users/{user_id}"),
     pytest.param(_call_admin_revoke_sessions, id="POST /admin/users/{user_id}/revoke-sessions"),
+    pytest.param(_call_admin_delete_user, id="DELETE /admin/users/{user_id}"),
 ]
 
 
