@@ -1,8 +1,18 @@
 from unittest.mock import patch
 
 from fastapi import FastAPI
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+    OTLPMetricExporter as HttpOTLPMetricExporter,
+)
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-from app.core.telemetry import configure_telemetry, get_meter, get_tracer
+from app.core.telemetry import (
+    _build_metric_readers,
+    _build_otlp_metric_exporter,
+    configure_telemetry,
+    get_meter,
+    get_tracer,
+)
 
 
 def test_configure_telemetry_sets_a_global_tracer_provider():
@@ -38,3 +48,15 @@ def test_configure_telemetry_degrades_gracefully_on_setup_error():
         "app.core.telemetry.FastAPIInstrumentor.instrument_app", side_effect=RuntimeError("boom")
     ):
         configure_telemetry(app)  # must not raise
+
+
+def test_build_otlp_metric_exporter_uses_http_when_protocol_is_http_protobuf(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+
+    assert isinstance(_build_otlp_metric_exporter(), HttpOTLPMetricExporter)
+
+
+def test_build_metric_readers_includes_a_periodic_otlp_reader():
+    readers = _build_metric_readers()
+
+    assert any(isinstance(reader, PeriodicExportingMetricReader) for reader in readers)
