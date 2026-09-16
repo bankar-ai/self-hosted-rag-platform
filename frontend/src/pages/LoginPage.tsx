@@ -1,15 +1,16 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "../lib/AuthContext";
 
 export default function LoginPage() {
   const { login, register } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
   const [error, setError] = useState<string | null>(null);
-  const [succeeded, setSucceeded] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -20,14 +21,10 @@ export default function LoginPage() {
       } else {
         await register(email, password);
       }
-      setSucceeded(true);
+      navigate("/chat");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     }
-  }
-
-  if (succeeded) {
-    return <p>Logged in.</p>;
   }
 
   return (

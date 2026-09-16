@@ -1,10 +1,20 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it } from "vitest";
 import App from "./App";
 
 describe("App", () => {
-  it("renders the app shell", () => {
-    render(<App />);
-    expect(screen.getByText("Self-Hosted RAG Platform")).toBeInTheDocument();
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("redirects an unauthenticated visitor to the login page", () => {
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole("heading", { name: /log in/i })).toBeInTheDocument();
   });
 });

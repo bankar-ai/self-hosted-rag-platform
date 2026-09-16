@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
 import LoginPage from "./LoginPage";
@@ -25,9 +25,12 @@ describe("LoginPage", () => {
     );
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/login"]}>
         <AuthProvider>
-          <LoginPage />
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/chat" element={<p>Chat page</p>} />
+          </Routes>
         </AuthProvider>
       </MemoryRouter>
     );
@@ -36,7 +39,7 @@ describe("LoginPage", () => {
     await userEvent.type(screen.getByLabelText(/password/i), "hunter2hunter2");
     await userEvent.click(screen.getByRole("button", { name: /log in/i }));
 
-    expect(await screen.findByText(/logged in/i)).toBeInTheDocument();
+    expect(await screen.findByText("Chat page")).toBeInTheDocument();
   });
 
   it("shows an error message on invalid credentials", async () => {
