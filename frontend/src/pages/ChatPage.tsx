@@ -45,21 +45,17 @@ function TypingIndicator() {
 }
 
 export default function ChatPage() {
-  const { user } = useAuth();
+  const { userId } = useAuth();
   const [conversationId, setConversationId] = useState<string>(() => newConversationId());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [recentConversations, setRecentConversations] = useState<RecentConversation[]>(() =>
-    user ? getConversationsStore(user.id).list() : []
+    userId ? getConversationsStore(userId).list() : []
   );
   const [recentDocuments] = useState<RecentDocument[]>(() =>
-    user ? getDocumentsStore(user.id).list() : []
+    userId ? getDocumentsStore(userId).list() : []
   );
-
-  if (!user) {
-    return <p className="p-6 text-sm text-slate-400">Loading...</p>;
-  }
 
   function startNewConversation(): void {
     setConversationId(newConversationId());
@@ -68,7 +64,7 @@ export default function ChatPage() {
 
   async function sendMessage(): Promise<void> {
     const query = input.trim();
-    if (!query || isStreaming || !user) return;
+    if (!query || isStreaming || !userId) return;
 
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: query }]);
@@ -114,7 +110,7 @@ export default function ChatPage() {
       }
 
       if (isFirstMessage) {
-        const store = getConversationsStore(user.id);
+        const store = getConversationsStore(userId);
         store.upsert({ id: conversationId, title: query.slice(0, 60), lastUpdated: Date.now() });
         setRecentConversations(store.list());
       }
