@@ -94,7 +94,33 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
-**Open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
+- **ERP-047 is Done (2026-09-17)** [Bug] — the live VM outage from a PDF upload is fully fixed.
+  `docling`'s fallback parser now runs on a separate Cloud Run service
+  (`deploy/cloud_run_docling/`), called over HTTP with GCP IAM auth (no stored secret);
+  `docling`/`torch`/`transformers` (72 packages, including unneeded CUDA/nvidia wheels) are
+  entirely removed from the root project and the live VM's own `.venv`. Three real bugs found
+  and fixed during implementation/deployment (not just planned): a Windows temp-file-reopen
+  issue caught by a local smoke test before deploying; the container downloading `docling`'s
+  models from HuggingFace at *request* time and hitting HF's rate limit (fixed by baking models
+  into the Docker image at build time, `docling-tools models download`, mirroring
+  `deploy/modal_ollama.py`'s existing pattern, plus pointing `DocumentConverter` at that local
+  path explicitly); and a missing system library (`libxcb.so.1`) for `opencv-python` on
+  `python:3.12-slim`, a known "opencv in a slim Docker image" issue. Live-verified end-to-end:
+  `POST /parse` returned `200 OK` with zero HuggingFace network calls, and the VM's memory held
+  at 266-321Mi available throughout — matching the pre-incident baseline exactly, no spike.
+  Backend: 394 tests passed (was 387), 96.62% coverage. Merged via PR #40 and a follow-up fix
+  PR #41. See `.ai/tickets/ERP-047.md`'s Resolution for full detail.
+- **A separate, unrelated issue surfaced during ERP-047's live verification**: the live
+  deployment's Modal workspace (hosting Ollama for embedding/generation) is returning
+  `"modal-http: workspace ... is disabled"` — likely tied to Modal's billing tier (usage was at
+  $1.03 against the "$1 usable without a payment method" threshold, per the live billing check
+  during this same session). This blocks the *next* pipeline stage after parsing (embedding),
+  so full end-to-end ingestion is currently broken on the live deployment even though ERP-047's
+  own fix works correctly. Not yet ticketed or investigated further — flagged to the user,
+  needs a decision (check Modal dashboard, possibly add a payment method) before the live app
+  is fully functional again.
+
+**Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
 check what's still open from that session:
 
@@ -108,17 +134,13 @@ check what's still open from that session:
 - **ERP-046** [Lapse] — Retrieval has no relevance guardrail: a non-question ("hi") still
   retrieves top-k chunks and gets a fully-cited answer about an unrelated document. Works exactly
   as designed; the design never considered this case.
-- **ERP-047** [Bug] — A live PDF upload took the entire VM down (not just the app -- SSH too),
-  root-caused to `docling`'s fallback parser (~4GB documented baseline vs. this VM's 958MB, zero
-  swap). Fixed for now via a manual `gcloud compute instances reset`; the real fix (offload
-  `docling` to Cloud Run, keep the VM thin) is scoped in the ticket but not yet built. This is
-  the most urgent of the four -- it's a live reliability gap, not a missing nice-to-have.
 
-All four are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
+All three are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
 `https://frontend-sigma-one-54.vercel.app`, iterated through two live-review bugfix rounds
 (PRs #38, #39: SPA-routing 404 on refresh, cross-user localStorage leakage, a page that could
 hang forever on a slow `/auth/me` fetch — all fixed) but not yet marked `Done` pending one more
-walkthrough.
+walkthrough (currently blocked on the Modal workspace issue above for the chat half of that
+walkthrough).
 
 **Older deferred items:**
 
