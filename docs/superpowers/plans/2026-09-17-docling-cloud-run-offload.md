@@ -295,6 +295,7 @@ point (docling's ~4GB documented baseline memory requirement vs. the VM's 958MB)
 docs/superpowers/specs/2026-09-17-docling-cloud-run-offload-design.md.
 """
 
+import os
 import tempfile
 from typing import Any
 
@@ -310,14 +311,24 @@ app = FastAPI(title="docling parsing service")
 async def parse(file: UploadFile) -> list[dict[str, Any]]:
     """Parse an uploaded PDF with docling, returning `{"text", "page_number"}` per page."""
     contents = await file.read()
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+
+    # `delete=False` + an explicit close before `docling` reopens the path: a file still held
+    # open by this process can't be reopened by another reader on Windows (irrelevant on Cloud
+    # Run's Linux runtime, but this keeps local dev/testing working too, and is more portable
+    # code regardless of platform). Found via a real local smoke test during implementation --
+    # the naive `with tempfile.NamedTemporaryFile() as tmp:` form fails with a Windows
+    # PermissionError the moment docling tries to reopen the still-open path.
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    try:
         tmp.write(contents)
-        tmp.flush()
+        tmp.close()
         try:
             converter = DocumentConverter()
             result = converter.convert(tmp.name)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {exc}") from exc
+    finally:
+        os.unlink(tmp.name)
 
     markdown = result.document.export_to_markdown(page_break_placeholder=_PAGE_BREAK)
     return [
