@@ -1,12 +1,18 @@
-"""PDF parsing: a fast native-text path with a slower quality (tables/OCR) fallback."""
+"""PDF parsing: a fast native-text path with a slower quality (tables/OCR) fallback.
+
+The quality fallback runs on a separate Cloud Run service (ERP-047), not in-process -- docling's
+own documented ~4GB baseline memory requirement is far more than the live deployment's VM can
+safely carry alongside the web app itself (a real incident: a document upload took the whole VM
+unresponsive before this fix). See
+docs/superpowers/specs/2026-09-17-docling-cloud-run-offload-design.md.
+"""
 
 from typing import Any, Literal, cast
 
 import pymupdf4llm
 
+from app.ingestion.cloud_run_client import call_docling_service
 from app.ingestion.config import IngestionSettings
-
-_PAGE_BREAK = "\n\n<!-- docling-page-break -->\n\n"
 
 
 def parse_fast(pdf_path: str) -> list[dict[str, Any]]:
@@ -15,7 +21,7 @@ def parse_fast(pdf_path: str) -> list[dict[str, Any]]:
 
 
 def needs_fallback(fast_pages: list[dict[str, Any]], ocr_text_threshold: int) -> bool:
-    """Decide whether a document needs the quality (Docling) parse instead of the fast path."""
+    """Decide whether a document needs the quality (Cloud Run docling) parse instead of the fast path."""
     for page in fast_pages:
         if len(page["text"].strip()) < ocr_text_threshold:
             return True
@@ -29,22 +35,12 @@ def needs_fallback(fast_pages: list[dict[str, Any]], ocr_text_threshold: int) ->
     return False
 
 
-def parse_quality(pdf_path: str) -> list[dict[str, Any]]:
-    """Docling parse (quality path: better tables + OCR). Returns {"text", "page_number"} dicts.
+def parse_quality(pdf_path: str, settings: IngestionSettings) -> list[dict[str, Any]]:
+    """Quality parse (better tables + OCR) via the Cloud Run docling service (ERP-047).
 
-    Imports `docling` lazily (not at module level) -- it pulls in `torch`/`transformers`, a
-    heavy cost every deployment would otherwise pay at import time even if this fallback path
-    (most documents use the fast path) is never actually reached.
+    Returns `{"text", "page_number"}` dicts, same shape as the fast path's normalized output.
     """
-    from docling.document_converter import DocumentConverter
-
-    converter = DocumentConverter()
-    result = converter.convert(pdf_path)
-    markdown = result.document.export_to_markdown(page_break_placeholder=_PAGE_BREAK)
-    return [
-        {"text": text, "page_number": index + 1}
-        for index, text in enumerate(markdown.split(_PAGE_BREAK))
-    ]
+    return call_docling_service(pdf_path, settings)
 
 
 def parse_pdf(
@@ -54,7 +50,7 @@ def parse_pdf(
     fast_pages = parse_fast(pdf_path)
 
     if needs_fallback(fast_pages, settings.ocr_text_threshold):
-        return parse_quality(pdf_path), "quality"
+        return parse_quality(pdf_path, settings), "quality"
 
     normalized = [
         {"text": page["text"], "page_number": page["metadata"]["page_number"]}

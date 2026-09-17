@@ -8,7 +8,6 @@ dependencies = [
     "alembic>=1.19.0",
     "argon2-cffi>=25.1.0",
     "authlib>=1.8.0",
-    "docling>=2.117.0",
     "faiss-cpu>=1.15.0",
     "fastapi>=0.141.1",
     "flashrank>=0.2.10",
@@ -55,6 +54,7 @@ constraint-dependencies = ["langchain-community<0.4"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 110

@@ -14,6 +14,8 @@ class IngestionSettings(BaseSettings):
     chunk_overlap: int = 200
     ocr_text_threshold: int = 20
     max_upload_size_bytes: int = 50_000_000
+    docling_service_url: str | None = None
+    docling_service_timeout_seconds: float = 480.0
 
 
 @lru_cache

@@ -49,12 +49,20 @@ def test_parse_pdf_uses_fast_path_for_simple_text(simple_text_pdf):
     assert pages[0]["page_number"] == 1
 
 
-def test_parse_pdf_falls_back_to_quality_for_table(table_pdf):
+def test_parse_pdf_falls_back_to_quality_for_table(table_pdf, monkeypatch):
+    monkeypatch.setattr(
+        "app.ingestion.parsers.call_docling_service",
+        lambda pdf_path, settings: [{"text": "R0C0 R0C1 R1C0 R1C1", "page_number": 1}],
+    )
     pages, parser_used = parse_pdf(table_pdf, _settings())
     assert parser_used == "quality"
     assert len(pages) >= 1
 
 
-def test_parse_pdf_falls_back_to_quality_for_scanned_page(scanned_pdf):
+def test_parse_pdf_falls_back_to_quality_for_scanned_page(scanned_pdf, monkeypatch):
+    monkeypatch.setattr(
+        "app.ingestion.parsers.call_docling_service",
+        lambda pdf_path, settings: [{"text": "scanned content", "page_number": 1}],
+    )
     pages, parser_used = parse_pdf(scanned_pdf, _settings())
     assert parser_used == "quality"
