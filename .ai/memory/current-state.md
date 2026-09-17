@@ -94,9 +94,31 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+**Open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
+`Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
+check what's still open from that session:
+
+- **ERP-044** [Improvement] — Document-scoped retrieval: no way to limit a chat query to
+  specific documents; `search()` always searches everything the caller owns. Needs a backend
+  design pass (filter parameter threaded through retrieval/generation), not just a frontend
+  tweak.
+- **ERP-045** [Improvement] — Answer feedback (thumbs up/down or similar): not implemented at
+  all yet, needs its own design (what's captured, where it's stored, whether it feeds ERP-030's
+  evaluation harness).
+- **ERP-046** [Lapse] — Retrieval has no relevance guardrail: a non-question ("hi") still
+  retrieves top-k chunks and gets a fully-cited answer about an unrelated document. Works exactly
+  as designed; the design never considered this case.
+
+All three are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
+`https://frontend-sigma-one-54.vercel.app`, iterated through two live-review bugfix rounds
+(PRs #38, #39: SPA-routing 404 on refresh, cross-user localStorage leakage, a page that could
+hang forever on a slow `/auth/me` fetch — all fixed) but not yet marked `Done` pending one more
+walkthrough.
+
+**Older deferred items:**
+
 - Self-service identity linking for an already-logged-in local user to add an OIDC identity (ERP-032 only supports auto-link-by-verified-email during login, not an explicit "link my account" flow).
 - Additional OIDC providers beyond Google (Microsoft Entra ID, Okta, self-hosted Keycloak/Authentik) are supported by ERP-032's provider-agnostic design but not concretely verified end-to-end yet.
 - Admin cross-user data visibility — the `admin` role is currently a distinction only (checked, but no elevated privilege); every ownership check is a bare `owner_id` equality with no admin bypass. Deferred rather than added untested at the tail of ERP-026 (surfaced by the final whole-branch review).
 - Self-service admin account creation — deliberately not exposed via `POST /auth/register`; still a manual/repository-level step (see ERP-040's resolution note for how the live deployment's first admin, `ops-admin@self-hosted-rag-platform.internal`, was created this way), deferred for future follow-up.
 - Operators with pre-ERP-031 ingested data should run `uv run python -m app.embedding.migrate_to_per_owner` before deploying ERP-031, then manually remove the old shared `data/faiss_index.bin` once the new per-owner indexes are confirmed correct.
-- Otherwise, no non-deferred work remains. Both halves of "Evaluation" are done and re-verified post-partitioning (ERP-029 + ERP-041); the full live-deployment observability trio is done (ERP-038 traces, ERP-039 logs, ERP-042 metrics); admin user cleanup is done (ERP-040); ERP-012's three deferred retrieval follow-ups, generation, conversation memory, streaming, and observability were all closed out in prior sessions. Everything left is one of the explicitly-deferred items above, DOCX/PPTX ingestion (deferred per standing preference), or the future LLMOps & Evaluation Platform (a separate repo, not work here).

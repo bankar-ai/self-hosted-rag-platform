@@ -2,6 +2,7 @@
 
 Status: Backlog
 Depends On: None
+Category: <Bug | Improvement | Lapse> (optional — see `.ai/tickets/README.md` for definitions)
 
 ## Description
 
