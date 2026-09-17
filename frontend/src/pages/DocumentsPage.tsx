@@ -15,20 +15,22 @@ const STATUS_STYLES: Record<RecentDocument["status"], string> = {
 };
 
 export default function DocumentsPage() {
-  const { user } = useAuth();
+  const { userId } = useAuth();
   const [documents, setDocuments] = useState<RecentDocument[]>(() =>
-    user ? getDocumentsStore(user.id).list() : []
+    userId ? getDocumentsStore(userId).list() : []
   );
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!user) {
-    return <p className="p-6 text-sm text-slate-400">Loading...</p>;
+  // AuthGuard already guarantees a valid token (and therefore a decodable userId) before this
+  // page can render at all -- this is a type-safety formality, not a loading state to wait out.
+  if (!userId) {
+    return null;
   }
-  const userId = user.id;
+  const scopedUserId = userId;
 
   function updateDocument(doc: RecentDocument): void {
-    const store = getDocumentsStore(userId);
+    const store = getDocumentsStore(scopedUserId);
     store.upsert(doc);
     setDocuments(store.list());
   }
