@@ -101,6 +101,32 @@ def test_register_then_login_then_refresh_then_logout():
     assert reuse_response.status_code == 401
 
 
+def test_me_returns_the_authenticated_caller_profile():
+    client.post(
+        "/auth/register",
+        json={"email": "me-router-test@example.com", "password": "a-long-enough-password"},
+    )
+    login_response = client.post(
+        "/auth/login",
+        json={"email": "me-router-test@example.com", "password": "a-long-enough-password"},
+    )
+    access_token = login_response.json()["access_token"]
+
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == "me-router-test@example.com"
+    assert body["role"] == "user"
+    assert body["is_active"] is True
+
+
+def test_me_rejects_missing_token():
+    response = client.get("/auth/me")
+
+    assert response.status_code == 401
+
+
 def test_register_rejects_duplicate_email():
     client.post(
         "/auth/register",

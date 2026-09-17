@@ -17,12 +17,19 @@ describe("LoginPage", () => {
 
   it("logs in and stores tokens on valid credentials", async () => {
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ access_token: "a", refresh_token: "b", token_type: "bearer" }),
-        { status: 200 }
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ access_token: "a", refresh_token: "b", token_type: "bearer" }),
+          { status: 200 }
+        )
       )
-    );
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: "u1", email: "user@example.com", role: "user", is_active: true }),
+          { status: 200 }
+        )
+      );
 
     render(
       <MemoryRouter initialEntries={["/login"]}>

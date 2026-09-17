@@ -8,4 +8,7 @@ export interface RecentDocument {
   error?: string;
 }
 
-export const documentsStore = createRecentItemsStore<RecentDocument>("rag-recent-documents", 5);
+/** Scoped per-user, same reasoning as `getConversationsStore`. */
+export function getDocumentsStore(userId: string) {
+  return createRecentItemsStore<RecentDocument>(`rag-recent-documents:${userId}`, 5);
+}
