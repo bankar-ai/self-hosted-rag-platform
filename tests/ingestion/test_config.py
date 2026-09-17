@@ -16,3 +16,19 @@ def test_settings_overridable_via_env(monkeypatch):
 
 def test_get_settings_returns_cached_instance():
     assert get_settings() is get_settings()
+
+
+def test_docling_service_url_defaults_to_none():
+    settings = IngestionSettings()
+    assert settings.docling_service_url is None
+
+
+def test_docling_service_timeout_defaults_to_480_seconds():
+    settings = IngestionSettings()
+    assert settings.docling_service_timeout_seconds == 480.0
+
+
+def test_docling_service_url_overridable_via_env(monkeypatch):
+    monkeypatch.setenv("INGESTION_DOCLING_SERVICE_URL", "https://example.run.app")
+    settings = IngestionSettings()
+    assert settings.docling_service_url == "https://example.run.app"
