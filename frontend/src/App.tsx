@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import AppShell from "./components/AppShell";
 import AuthGuard from "./components/AuthGuard";
 import { AuthProvider } from "./lib/AuthContext";
 import ChatPage from "./pages/ChatPage";
@@ -14,7 +15,9 @@ function App() {
           path="/chat"
           element={
             <AuthGuard>
-              <ChatPage />
+              <AppShell>
+                <ChatPage />
+              </AppShell>
             </AuthGuard>
           }
         />
@@ -22,7 +25,9 @@ function App() {
           path="/documents"
           element={
             <AuthGuard>
-              <DocumentsPage />
+              <AppShell>
+                <DocumentsPage />
+              </AppShell>
             </AuthGuard>
           }
         />
