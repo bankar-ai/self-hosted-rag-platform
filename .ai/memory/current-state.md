@@ -108,8 +108,13 @@ check what's still open from that session:
 - **ERP-046** [Lapse] — Retrieval has no relevance guardrail: a non-question ("hi") still
   retrieves top-k chunks and gets a fully-cited answer about an unrelated document. Works exactly
   as designed; the design never considered this case.
+- **ERP-047** [Bug] — A live PDF upload took the entire VM down (not just the app -- SSH too),
+  root-caused to `docling`'s fallback parser (~4GB documented baseline vs. this VM's 958MB, zero
+  swap). Fixed for now via a manual `gcloud compute instances reset`; the real fix (offload
+  `docling` to Cloud Run, keep the VM thin) is scoped in the ticket but not yet built. This is
+  the most urgent of the four -- it's a live reliability gap, not a missing nice-to-have.
 
-All three are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
+All four are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
 `https://frontend-sigma-one-54.vercel.app`, iterated through two live-review bugfix rounds
 (PRs #38, #39: SPA-routing 404 on refresh, cross-user localStorage leakage, a page that could
 hang forever on a slow `/auth/me` fetch — all fixed) but not yet marked `Done` pending one more

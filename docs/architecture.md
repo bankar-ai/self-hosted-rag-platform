@@ -81,6 +81,16 @@ Prefer composition over inheritance.
 
 All dependencies must be open-source and free to use. Paid or proprietary APIs/services (hosted LLMs, managed vector DBs, paid embedding APIs, etc.) are out of scope unless explicitly approved as an exception.
 
+**Keep the always-on host thin; offload anything CPU/memory-heavy to serverless compute.** The
+live deployment's always-on host (currently a GCP `e2-micro` VM, ~958MB RAM, chosen for its
+permanent free tier) exists to serve requests, not to run heavy compute. Established twice now:
+LLM/embedding inference runs on Modal (GPU, ERP-037), not on the VM; `docling`'s document-parsing
+fallback runs on Cloud Run (CPU/memory, decided 2026-09-17 after it took the whole VM down mid-
+demo — see `.ai/sessions/` around that date), not in-process on the VM. Before adding anything
+new that's meaningfully CPU- or memory-heavy (a new ML model, a batch job, anything beyond simple
+request/response logic), default to a separate serverless service the VM calls out to, not code
+that runs in the VM's own process. Don't wait for it to crash the VM first to make this call.
+
 ## Technology Stack
 
 Operating System
