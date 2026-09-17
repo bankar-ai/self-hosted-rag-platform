@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "../lib/apiClient";
-import { documentsStore, type RecentDocument } from "../lib/documentsStore";
+import { useAuth } from "../lib/AuthContext";
+import { getDocumentsStore, type RecentDocument } from "../lib/documentsStore";
 import type { JobStatusResponse } from "../lib/types";
 
 const POLL_INTERVAL_MS = 2000;
@@ -14,13 +15,22 @@ const STATUS_STYLES: Record<RecentDocument["status"], string> = {
 };
 
 export default function DocumentsPage() {
-  const [documents, setDocuments] = useState<RecentDocument[]>(() => documentsStore.list());
+  const { user } = useAuth();
+  const [documents, setDocuments] = useState<RecentDocument[]>(() =>
+    user ? getDocumentsStore(user.id).list() : []
+  );
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  if (!user) {
+    return <p className="p-6 text-sm text-slate-400">Loading...</p>;
+  }
+  const userId = user.id;
+
   function updateDocument(doc: RecentDocument): void {
-    documentsStore.upsert(doc);
-    setDocuments(documentsStore.list());
+    const store = getDocumentsStore(userId);
+    store.upsert(doc);
+    setDocuments(store.list());
   }
 
   async function pollJob(jobId: string, filename: string): Promise<void> {

@@ -6,7 +6,7 @@ from typing import cast
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
 
-from app.auth.dependencies import require_role
+from app.auth.dependencies import get_current_user, require_role
 from app.auth.oidc import InvalidOidcStateError, OidcTokenExchangeError, OidcTokenValidationError
 from app.auth.schemas import (
     CurrentUser,
@@ -30,6 +30,7 @@ from app.auth.service import (
     UserNotFoundError,
     complete_oidc_login,
     delete_user,
+    get_user_profile,
     list_all_users,
     refresh_access_token,
     register_user,
@@ -98,6 +99,16 @@ def refresh(request: RefreshRequest) -> TokenResponse:
 def logout(request: LogoutRequest) -> None:
     """Revoke a refresh token."""
     logout_user(request.refresh_token)
+
+
+@router.get("/me")
+def me(current_user: CurrentUser = Depends(get_current_user)) -> UserResponse:
+    """Return the authenticated caller's own profile (id, email, role, is_active)."""
+    try:
+        user = get_user_profile(current_user.id)
+    except UserNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
+    return UserResponse(id=user.id, email=user.email, role=cast(Role, user.role), is_active=user.is_active)
 
 
 @oidc_router.get("/{provider}/login")

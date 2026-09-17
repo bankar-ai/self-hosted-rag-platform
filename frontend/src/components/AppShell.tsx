@@ -9,7 +9,7 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
 
   return (
     <div className="flex h-screen flex-col">
@@ -17,17 +17,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <span className="text-lg font-semibold tracking-tight text-slate-900">
           Self-Hosted RAG Platform
         </span>
-        <nav className="flex items-center gap-2">
+        <nav className="flex items-center gap-3">
           <NavLink to="/chat" className={navLinkClass}>
             Chat
           </NavLink>
           <NavLink to="/documents" className={navLinkClass}>
             Documents
           </NavLink>
+          {user && (
+            <span className="ml-2 truncate text-sm text-slate-500" title={user.email}>
+              {user.email}
+            </span>
+          )}
           <button
             type="button"
             onClick={logout}
-            className="ml-2 rounded-md px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
           >
             Log out
           </button>

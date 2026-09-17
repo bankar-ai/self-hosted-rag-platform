@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
 import { setTokens } from "../lib/tokenStorage";
 import AuthGuard from "./AuthGuard";
@@ -8,6 +8,21 @@ import AuthGuard from "./AuthGuard";
 describe("AuthGuard", () => {
   beforeEach(() => {
     localStorage.clear();
+    // AuthProvider fetches /auth/me on mount whenever tokens already exist -- stub it so that
+    // fire-and-forget call doesn't hit the real network during tests.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ id: "u1", email: "user@example.com", role: "user", is_active: true }),
+          { status: 200 }
+        )
+      )
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("redirects to /login when not authenticated", () => {
