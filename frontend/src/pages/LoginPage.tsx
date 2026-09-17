@@ -28,36 +28,48 @@ export default function LoginPage() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto mt-24 flex max-w-sm flex-col gap-4 p-4">
-      <h1 className="text-xl font-semibold">{mode === "login" ? "Log in" : "Register"}</h1>
-      <label className="flex flex-col gap-1 text-sm">
-        Email
-        <Input
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          required
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Password
-        <Input
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          required
-          minLength={8}
-        />
-      </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <Button type="submit">{mode === "login" ? "Log in" : "Register"}</Button>
-      <button
-        type="button"
-        className="text-sm underline"
-        onClick={() => setMode(mode === "login" ? "register" : "login")}
-      >
-        {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
-      </button>
-    </form>
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+      <div className="w-full max-w-sm">
+        <p className="mb-6 text-center text-lg font-semibold tracking-tight text-slate-900">
+          Self-Hosted RAG Platform
+        </p>
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <h1 className="text-xl font-semibold text-slate-900">
+            {mode === "login" ? "Log in" : "Register"}
+          </h1>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Email
+            <Input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-slate-700">
+            Password
+            <Input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              minLength={8}
+            />
+          </label>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <Button type="submit">{mode === "login" ? "Log in" : "Register"}</Button>
+          <button
+            type="button"
+            className="text-sm text-slate-500 underline hover:text-slate-900"
+            onClick={() => setMode(mode === "login" ? "register" : "login")}
+          >
+            {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
