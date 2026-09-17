@@ -582,7 +582,20 @@ git commit -m "feat: route docling parsing through Cloud Run, drop docling from 
 
 ### Task 5: Full backend verification
 
-**Files:** none (verification only)
+**Files:** `pyproject.toml` (one-line fix found during this step)
+
+- [ ] **Step 0: Fix pytest's default collection scope**
+
+Running the full suite for the first time after Task 4 surfaces a real problem: pytest's
+default discovery scans the whole repo, including `deploy/cloud_run_docling/test_main.py` --
+which now fails to import (`ModuleNotFoundError: No module named 'docling'`), exactly as
+intended by Task 4 removing it from the root project, but pytest doesn't know that file is a
+separate deployable unit's own test suite. Fix by scoping collection explicitly:
+
+```toml
+# pyproject.toml -- add to [tool.pytest.ini_options]
+testpaths = ["tests"]
+```
 
 - [ ] **Step 1: Run the full backend suite with coverage**
 
