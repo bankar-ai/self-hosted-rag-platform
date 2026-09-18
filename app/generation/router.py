@@ -16,6 +16,7 @@ from app.generation.schemas import (
     ConversationListResponse,
     GenerationQuery,
     GenerationResponse,
+    RenameConversationRequest,
 )
 from app.generation.service import (
     ConversationAccessDeniedError,
@@ -23,6 +24,7 @@ from app.generation.service import (
     generate_stream,
     get_conversation_history,
     list_conversations,
+    rename_conversation,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,3 +104,15 @@ def get_conversation(
     if history is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return history
+
+
+@conversations_router.patch("/{conversation_id}", status_code=204)
+def rename_conversation_endpoint(
+    conversation_id: uuid.UUID,
+    rename_request: RenameConversationRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Set a conversation's explicit display title. 404 if unknown or not owned by the caller."""
+    renamed = rename_conversation(conversation_id, current_user.id, rename_request.title)
+    if not renamed:
+        raise HTTPException(status_code=404, detail="Conversation not found")

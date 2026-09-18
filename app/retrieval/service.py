@@ -22,7 +22,7 @@ from app.ingestion.repository import (
     search_chunks_by_text,
 )
 from app.retrieval.cache import RetrievalCache, get_default_retrieval_cache
-from app.retrieval.config import get_reranker_settings
+from app.retrieval.config import RetrievalSettings, get_reranker_settings, get_retrieval_settings
 from app.retrieval.reranker import FlashRankReranker, Reranker
 from app.retrieval.schemas import RetrievedChunk
 
@@ -124,6 +124,7 @@ def search(
     reranker: Reranker | None = None,
     expand_sections: bool = False,
     cache: RetrievalCache | None = None,
+    retrieval_settings: RetrievalSettings | None = None,
 ) -> list[RetrievedChunk]:
     """Run hybrid (vector + BM25) search restricted to `owner_id`'s documents.
 
@@ -152,6 +153,13 @@ def search(
     first place. BM25 is independently scoped by the same `owner_id` via a SQL join
     (`search_chunks_by_text`). Oversampling candidates (`RRF_OVERSAMPLE_MULTIPLIER`) is kept
     purely for RRF fusion quality now, not for isolation.
+
+    `retrieval_settings.max_relevant_distance` (ERP-046), if set, drops vector-leg candidates
+    whose raw FAISS L2 distance exceeds it *before* RRF fusion -- an off-topic query (e.g. a
+    plain greeting) that would otherwise still surface `top_k` results regardless of how
+    genuinely relevant they are. BM25 is unaffected (its own `ts_rank` is a real relevance
+    signal already). If this drops every vector candidate and BM25 also finds nothing,
+    `search()` returns `[]` exactly as it already does for an empty index.
     """
     cache = cache or get_default_retrieval_cache()
     cache_key = _cache_key(query, top_k, rerank, expand_sections, owner_id)
@@ -171,6 +179,13 @@ def search(
     if not vectors:
         raise ValueError("embedding client returned no vectors for the query")
     vector_hits = faiss_index_store.search(owner_id, vectors[0], candidate_k)
+    retrieval_settings = retrieval_settings or get_retrieval_settings()
+    if retrieval_settings.max_relevant_distance is not None:
+        vector_hits = [
+            (vector_id, distance)
+            for vector_id, distance in vector_hits
+            if distance <= retrieval_settings.max_relevant_distance
+        ]
     vector_ranked_ids = [vector_id for vector_id, _ in vector_hits]
 
     session_factory = get_session_factory()

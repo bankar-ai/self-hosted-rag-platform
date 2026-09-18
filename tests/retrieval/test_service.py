@@ -8,6 +8,7 @@ from app.embedding.index import OwnerFaissIndexStore
 from app.ingestion.repository import save_document_and_chunks
 from app.ingestion.schemas import Chunk
 from app.retrieval import service as service_module
+from app.retrieval.config import RetrievalSettings
 from app.retrieval.schemas import RetrievedChunk
 from app.retrieval.service import (
     RRF_OVERSAMPLE_MULTIPLIER,
@@ -17,6 +18,11 @@ from app.retrieval.service import (
 )
 
 _TEST_OWNER_ID = uuid.uuid4()
+
+# These fusion-mechanics tests use synthetic orthogonal unit vectors as stand-ins for "distinct
+# content," not real embedding geometry -- their L2 distance (sqrt(2) =~ 1.41) would otherwise
+# trip ERP-046's live-calibrated relevance gate, which is irrelevant to what these tests check.
+_NO_RELEVANCE_GATE = RetrievalSettings(max_relevant_distance=None)
 
 
 def _ensure_test_owner(session):
@@ -141,6 +147,7 @@ def test_search_returns_ranked_chunks(tmp_path):
         settings=EmbeddingSettings(dimension=4),
         embedding_client=fake_client,
         faiss_index_store=faiss_index_store,
+        retrieval_settings=_NO_RELEVANCE_GATE,
     )
 
     assert fake_client.calls == [["find chunk 0"]]
@@ -308,6 +315,7 @@ def test_search_fuses_overlapping_vector_and_bm25_hits(tmp_path):
         settings=EmbeddingSettings(dimension=4),
         embedding_client=fake_client,
         faiss_index_store=faiss_index_store,
+        retrieval_settings=_NO_RELEVANCE_GATE,
     )
 
     # Note: BM25 searches the whole `chunks` table (no per-document filtering, per ERP-012/014
@@ -688,3 +696,69 @@ def test_search_raises_when_embedding_client_returns_no_vectors(tmp_path):
             embedding_client=fake_client,
             faiss_index_store=faiss_index_store,
         )
+
+
+def test_search_relevance_gate_drops_a_vector_hit_beyond_max_relevant_distance(tmp_path):
+    document_id = "doc-relevance-gate-test"
+    chunks = [_chunk(document_id, 0, text="completely unrelated filler content")]
+    # The query vector is orthogonal to the chunk's vector (L2 distance sqrt(2) =~ 1.41),
+    # simulating an off-topic query against real content.
+    vectors = [[1.0, 0.0, 0.0, 0.0]]
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    _persist_and_index(document_id, chunks, vectors, faiss_index_store, _TEST_OWNER_ID)
+
+    fake_client = _FakeEmbeddingClient(vector=[0.0, 1.0, 0.0, 0.0])
+    results = search(
+        query="hi",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        retrieval_settings=RetrievalSettings(max_relevant_distance=1.0),
+    )
+
+    assert results == []
+
+
+def test_search_relevance_gate_keeps_a_vector_hit_within_max_relevant_distance(tmp_path):
+    document_id = "doc-relevance-gate-keep-test"
+    chunks = [_chunk(document_id, 0, text="closely matching content")]
+    vectors = [[1.0, 0.0, 0.0, 0.0]]
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    _persist_and_index(document_id, chunks, vectors, faiss_index_store, _TEST_OWNER_ID)
+
+    fake_client = _FakeEmbeddingClient(vector=[1.0, 0.0, 0.0, 0.0])
+    results = search(
+        query="closely matching",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        retrieval_settings=RetrievalSettings(max_relevant_distance=1.0),
+    )
+
+    assert len(results) == 1
+    assert results[0].chunk_id == f"{document_id}-0"
+
+
+def test_search_relevance_gate_disabled_when_max_relevant_distance_is_none(tmp_path):
+    document_id = "doc-relevance-gate-disabled-test"
+    chunks = [_chunk(document_id, 0, text="completely unrelated filler content")]
+    vectors = [[1.0, 0.0, 0.0, 0.0]]
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    _persist_and_index(document_id, chunks, vectors, faiss_index_store, _TEST_OWNER_ID)
+
+    fake_client = _FakeEmbeddingClient(vector=[0.0, 1.0, 0.0, 0.0])
+    results = search(
+        query="hi",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        retrieval_settings=RetrievalSettings(max_relevant_distance=None),
+    )
+
+    assert len(results) == 1

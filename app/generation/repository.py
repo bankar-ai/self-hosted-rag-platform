@@ -23,6 +23,22 @@ def get_or_create_conversation(
     return conversation
 
 
+def rename_conversation(
+    session: Session, conversation_id: uuid.UUID, owner_id: uuid.UUID, title: str
+) -> bool:
+    """Set `conversation_id`'s explicit title if it exists and is owned by `owner_id`.
+
+    Returns `False` (does nothing) if the conversation doesn't exist or belongs to a
+    different owner, matching the existing ownership-check convention. Does not commit --
+    the caller controls the transaction boundary.
+    """
+    conversation = session.get(ConversationRecord, conversation_id)
+    if conversation is None or conversation.owner_id != owner_id:
+        return False
+    conversation.title = title
+    return True
+
+
 def get_conversation_owner_id(session: Session, conversation_id: uuid.UUID) -> uuid.UUID | None:
     """Return the owner_id of `conversation_id` if it already exists, else `None`.
 

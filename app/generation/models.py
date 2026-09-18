@@ -19,6 +19,7 @@ class ConversationRecord(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    title: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class ConversationMessageRecord(Base):
