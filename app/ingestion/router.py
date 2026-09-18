@@ -8,11 +8,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 
 from app.auth.dependencies import get_current_user
 from app.auth.schemas import CurrentUser
+from app.embedding.service import delete_document_and_vectors
 from app.ingestion import jobs
 from app.ingestion.config import get_settings
-from app.ingestion.schemas import JobStatusResponse
+from app.ingestion.schemas import DocumentListResponse, JobStatusResponse
+from app.ingestion.service import list_documents
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
+documents_router = APIRouter(prefix="/documents", tags=["documents"])
 
 _PDF_MAGIC = b"%PDF-"
 _COPY_CHUNK_SIZE = 1024 * 1024
@@ -76,3 +79,17 @@ def get_job_status(
     if record is None or record.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobStatusResponse(status=record.status, result=record.result, error=record.error)
+
+
+@documents_router.get("")
+def list_documents_endpoint(current_user: CurrentUser = Depends(get_current_user)) -> DocumentListResponse:
+    """Return the caller's successfully ingested documents, newest first."""
+    return list_documents(current_user.id)
+
+
+@documents_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document_endpoint(document_id: str, current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Delete a document, its chunks, and its FAISS vectors. 404 if unknown or not owned by the caller."""
+    deleted = delete_document_and_vectors(document_id, current_user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")

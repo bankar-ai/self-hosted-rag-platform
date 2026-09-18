@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Set as AbstractSet
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.telemetry import get_tracer
@@ -43,6 +43,36 @@ def save_document_and_chunks(
     session.add_all(records)
     session.flush()
     return records
+
+
+def list_documents_for_owner(session: Session, owner_id: uuid.UUID) -> list[DocumentRecord]:
+    """Return `owner_id`'s successfully ingested documents, newest first."""
+    return list(
+        session.scalars(
+            select(DocumentRecord)
+            .where(DocumentRecord.owner_id == owner_id)
+            .order_by(DocumentRecord.created_at.desc())
+        ).all()
+    )
+
+
+def delete_document(session: Session, document_id: str, owner_id: uuid.UUID) -> list[int] | None:
+    """Delete `document_id` and its chunks if owned by `owner_id`. Does not commit.
+
+    Returns the deleted chunks' `vector_id`s (so the caller can also remove them from the
+    FAISS index), or `None` if the document doesn't exist or belongs to a different owner --
+    in that case nothing is deleted, matching the ingestion job 404 convention of not
+    distinguishing "doesn't exist" from "exists but isn't yours".
+    """
+    document = session.get(DocumentRecord, document_id)
+    if document is None or document.owner_id != owner_id:
+        return None
+    vector_ids = list(
+        session.scalars(select(ChunkRecord.vector_id).where(ChunkRecord.document_id == document_id))
+    )
+    session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document_id))
+    session.delete(document)
+    return vector_ids
 
 
 def get_chunks_by_vector_ids(

@@ -171,6 +171,87 @@ def test_get_job_status_404_for_job_belonging_to_another_user(simple_text_pdf, a
     assert response.status_code == 404
 
 
+def test_list_documents_empty_for_new_user(auth_headers):
+    response = client.get("/documents", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"documents": []}
+
+
+def test_list_documents_returns_document_after_successful_ingestion(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    final = _poll_until_done(job_id, auth_headers)
+    document_id = final["result"]["document_id"]
+
+    response = client.get("/documents", headers=auth_headers)
+
+    assert response.status_code == 200
+    documents = response.json()["documents"]
+    assert any(d["document_id"] == document_id and d["filename"] == "simple.pdf" for d in documents)
+
+
+def test_list_documents_does_not_include_another_users_documents(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    _poll_until_done(upload.json()["job_id"], auth_headers)
+
+    other_user_headers = register_and_login(client, "ingestion-documents-other-owner")
+    response = client.get("/documents", headers=other_user_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"documents": []}
+
+
+def test_delete_document_removes_it_from_the_list(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+
+    delete_response = client.delete(f"/documents/{document_id}", headers=auth_headers)
+    assert delete_response.status_code == 204
+
+    list_response = client.get("/documents", headers=auth_headers)
+    assert all(d["document_id"] != document_id for d in list_response.json()["documents"])
+
+
+def test_delete_document_404_for_unknown_document(auth_headers):
+    response = client.delete("/documents/does-not-exist", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_delete_document_404_for_document_belonging_to_another_user(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+
+    other_user_headers = register_and_login(client, "ingestion-delete-other-owner")
+    response = client.delete(f"/documents/{document_id}", headers=other_user_headers)
+
+    assert response.status_code == 404
+    still_listed = client.get("/documents", headers=auth_headers)
+    assert any(d["document_id"] == document_id for d in still_listed.json()["documents"])
+
+
 def test_upload_pdf_rejects_oversized_file(monkeypatch, auth_headers):
     # Finding 3 (final whole-branch review): the upload endpoint streamed uploads of
     # unbounded size to a temp file with no size check — a resource-exhaustion risk.

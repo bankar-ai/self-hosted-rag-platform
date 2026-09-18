@@ -45,4 +45,23 @@ describe("createRecentItemsStore", () => {
     const secondInstance = createRecentItemsStore<Item>("test-items", 5);
     expect(secondInstance.list().map((i) => i.id)).toEqual(["a"]);
   });
+
+  it("removes an item by id, leaving the rest untouched", () => {
+    const store = createRecentItemsStore<Item>("test-items", 5);
+    store.upsert({ id: "a", title: "A", lastUpdated: 1 });
+    store.upsert({ id: "b", title: "B", lastUpdated: 2 });
+
+    store.remove("a");
+
+    expect(store.list().map((i) => i.id)).toEqual(["b"]);
+  });
+
+  it("removing an id that isn't present is a no-op", () => {
+    const store = createRecentItemsStore<Item>("test-items", 5);
+    store.upsert({ id: "a", title: "A", lastUpdated: 1 });
+
+    store.remove("does-not-exist");
+
+    expect(store.list().map((i) => i.id)).toEqual(["a"]);
+  });
 });
