@@ -58,7 +58,7 @@ async def upload_pdf(
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
-    job_id = jobs.create_job(current_user.id)
+    job_id = jobs.create_job(current_user.id, str(tmp_path), file.filename)
     background_tasks.add_task(
         jobs.run_ingestion_job, job_id, str(tmp_path), file.filename, settings, current_user.id
     )
@@ -79,6 +79,30 @@ def get_job_status(
     if record is None or record.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobStatusResponse(status=record.status, result=record.result, error=record.error)
+
+
+@router.post("/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+def retry_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict[str, str]:
+    """Re-run ingestion for a failed job's original uploaded file, without a fresh upload.
+
+    404 if `job_id` is unknown, not owned by the caller, or not currently `failed` (matching
+    the existing job-status-check 404 convention). Returns a brand new `job_id` -- the
+    original failed job record is left untouched, this schedules a separate job.
+    """
+    settings = get_settings()
+    retried = jobs.retry_job(job_id, current_user.id)
+    if retried is None:
+        raise HTTPException(status_code=404, detail="Failed job not found")
+
+    new_job_id, pdf_path, filename = retried
+    background_tasks.add_task(
+        jobs.run_ingestion_job, new_job_id, pdf_path, filename, settings, current_user.id
+    )
+    return {"job_id": new_job_id}
 
 
 @documents_router.get("")

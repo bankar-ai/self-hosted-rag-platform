@@ -16,7 +16,7 @@ def test_run_ingestion_job_records_failed_status_metric(monkeypatch):
         jobs_module, "_jobs_counter", provider.get_meter("test").create_counter("ingestion_jobs_total")
     )
 
-    job_id = create_job(uuid.uuid4())
+    job_id = create_job(uuid.uuid4(), "/tmp/unused.pdf", "unused.pdf")
     with patch("app.ingestion.jobs.ingest_pdf", side_effect=ValueError("bad pdf")):
         run_ingestion_job(
             job_id, "does-not-matter.pdf", "does-not-matter.pdf", IngestionSettings(), uuid.uuid4()

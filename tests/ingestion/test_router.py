@@ -155,6 +155,88 @@ def test_get_job_status_404_for_unknown_job(auth_headers):
     assert response.status_code == 404
 
 
+def test_retry_job_reruns_a_failed_job_to_completion(monkeypatch, simple_text_pdf, auth_headers):
+    # First call to ingest_pdf fails (simulating a transient failure); the retry's call
+    # succeeds -- proving retry actually re-runs ingestion against the original bytes rather
+    # than just flipping a status.
+    import app.ingestion.jobs as jobs_module
+
+    real_ingest_pdf = jobs_module.ingest_pdf
+    calls = {"count": 0}
+
+    def _flaky_ingest_pdf(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("simulated transient failure")
+        return real_ingest_pdf(*args, **kwargs)
+
+    monkeypatch.setattr(jobs_module, "ingest_pdf", _flaky_ingest_pdf)
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    failed = _poll_until_done(job_id, auth_headers)
+    assert failed["status"] == "failed"
+
+    retry_response = client.post(f"/ingestion/jobs/{job_id}/retry", headers=auth_headers)
+    assert retry_response.status_code == 202
+    new_job_id = retry_response.json()["job_id"]
+    assert new_job_id != job_id
+
+    retried = _poll_until_done(new_job_id, auth_headers)
+    assert retried["status"] == "done"
+    assert calls["count"] == 2
+
+    # The original failed job's own status is untouched.
+    original = client.get(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert original.json()["status"] == "failed"
+
+
+def test_retry_job_404_for_unknown_job(auth_headers):
+    response = client.post("/ingestion/jobs/does-not-exist/retry", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_retry_job_404_for_a_job_that_is_not_failed(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    done = _poll_until_done(job_id, auth_headers)
+    assert done["status"] == "done"
+
+    response = client.post(f"/ingestion/jobs/{job_id}/retry", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_retry_job_404_for_job_belonging_to_another_user(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    _poll_until_done(job_id, auth_headers)
+
+    other_user_headers = register_and_login(client, "ingestion-retry-other-owner")
+    response = client.post(f"/ingestion/jobs/{job_id}/retry", headers=other_user_headers)
+    assert response.status_code == 404
+
+
 def test_get_job_status_404_for_job_belonging_to_another_user(simple_text_pdf, auth_headers):
     pdf_bytes = _read_fixture_bytes(simple_text_pdf)
     response = client.post(
