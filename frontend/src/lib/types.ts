@@ -70,6 +70,7 @@ export interface ConversationSummary {
   conversation_id: string;
   created_at: string;
   preview: string | null;
+  title: string | null;
 }
 
 export interface ConversationListResponse {
