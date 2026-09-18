@@ -18,6 +18,8 @@ export interface Citation {
   page_start: number;
   page_end: number;
   source_filename: string;
+  score: number;
+  reranked: boolean;
 }
 
 export interface GenerationRequest {

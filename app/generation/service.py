@@ -1,6 +1,7 @@
 """Grounded answer generation over hybrid-retrieved chunks, with optional multi-turn memory."""
 
 import logging
+import re
 import uuid
 from typing import Any, Iterator
 
@@ -40,7 +41,27 @@ class ConversationAccessDeniedError(Exception):
     """Raised when a client-supplied `conversation_id` already exists but belongs to a different owner."""
 
 
-def _citations_for(chunks: list[RetrievedChunk]) -> list[Citation]:
+_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]")
+
+
+def _cited_chunks(answer: str, included_chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Return only the `included_chunks` the answer actually cites with a `[n]` marker.
+
+    `included_chunks` is 1-indexed by prompt position (`build_prompt`'s `[1]`, `[2]`, ...);
+    a marker number with no corresponding chunk (a hallucinated citation) is silently
+    ignored, matching the existing tolerance for LLM output that doesn't perfectly follow
+    instructions. Preserves `included_chunks`' original order (ERP-055) -- a chunk the model
+    never referenced is not returned, even though it was present in its context window.
+    """
+    cited_indices = {int(match) for match in _CITATION_MARKER_RE.findall(answer)}
+    return [
+        chunk
+        for index, chunk in enumerate(included_chunks, start=1)
+        if index in cited_indices
+    ]
+
+
+def _citations_for(chunks: list[RetrievedChunk], reranked: bool) -> list[Citation]:
     return [
         Citation(
             chunk_id=chunk.chunk_id,
@@ -49,6 +70,8 @@ def _citations_for(chunks: list[RetrievedChunk]) -> list[Citation]:
             page_start=chunk.page_start,
             page_end=chunk.page_end,
             source_filename=chunk.source_filename,
+            score=chunk.score,
+            reranked=reranked,
         )
         for chunk in chunks
     ]
@@ -101,9 +124,8 @@ def generate(
         llm_client = llm_client or OllamaLLMClient(settings)
         user_prompt, included_chunks = build_prompt(query, chunks, settings.max_context_chars)
         answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
-        return GenerationResponse(
-            answer=answer, citations=_citations_for(included_chunks), conversation_id=None
-        )
+        citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
+        return GenerationResponse(answer=answer, citations=citations, conversation_id=None)
 
     session_factory = get_session_factory()
 
@@ -127,14 +149,14 @@ def generate(
     )
     if not chunks:
         answer = NO_CONTEXT_ANSWER
-        citations: list[Citation] = []
+        citations = []
     else:
         llm_client = llm_client or OllamaLLMClient(settings)
         user_prompt, included_chunks = build_prompt(
             query, chunks, settings.max_context_chars, history=history
         )
         answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
-        citations = _citations_for(included_chunks)
+        citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
 
     with session_factory() as write_session:
         get_or_create_conversation(write_session, conversation_id, owner_id)
@@ -157,11 +179,14 @@ def generate_stream(
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Streaming counterpart to `generate`: yields `(event, data)` tuples instead of returning one response.
 
-    Event sequence on success: one `("citations", {"citations": [...]})`, zero or more
-    `("token", {"text": "..."})` (one per chunk of generated text), then a terminal
-    `("done", {"conversation_id": str | None})`. On any failure, yields a terminal
-    `("error", {"detail": "..."})` instead of `"done"` -- callers must treat `"error"` as
-    the end of the stream, not attempt to resume iteration.
+    Event sequence on success: zero or more `("token", {"text": "..."})` (one per chunk of
+    generated text), then one `("citations", {"citations": [...]})`, then a terminal
+    `("done", {"conversation_id": str | None})`. Citations are emitted after the tokens, not
+    before (ERP-055) -- which chunks were actually cited can only be known once the full
+    answer text exists, since only chunks referenced by a `[n]` marker in that text are
+    included (see `_cited_chunks`). On any failure, yields a terminal `("error", {"detail":
+    "..."})` instead of `"done"` -- callers must treat `"error"` as the end of the stream,
+    not attempt to resume iteration.
 
     Shares `generate()`'s stateless/stateful branching, rewrite, ownership, and persistence
     semantics exactly (see `generate`'s docstring) -- only the delivery mechanism differs.
@@ -177,16 +202,20 @@ def generate_stream(
                 query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
             )
             if not chunks:
-                yield "citations", {"citations": []}
                 yield "token", {"text": NO_CONTEXT_ANSWER}
+                yield "citations", {"citations": []}
                 yield "done", {"conversation_id": None}
                 return
 
             llm_client = llm_client or OllamaLLMClient(settings)
             user_prompt, included_chunks = build_prompt(query, chunks, settings.max_context_chars)
-            yield "citations", {"citations": [c.model_dump() for c in _citations_for(included_chunks)]}
+            answer_parts: list[str] = []
             for piece in llm_client.generate_stream(SYSTEM_PROMPT, user_prompt):
+                answer_parts.append(piece)
                 yield "token", {"text": piece}
+            answer = "".join(answer_parts)
+            citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
+            yield "citations", {"citations": [c.model_dump() for c in citations]}
             yield "done", {"conversation_id": None}
             return
 
@@ -210,20 +239,21 @@ def generate_stream(
             rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
         )
         if not chunks:
-            yield "citations", {"citations": []}
             yield "token", {"text": NO_CONTEXT_ANSWER}
+            yield "citations", {"citations": []}
             answer = NO_CONTEXT_ANSWER
         else:
             llm_client = llm_client or OllamaLLMClient(settings)
             user_prompt, included_chunks = build_prompt(
                 query, chunks, settings.max_context_chars, history=history
             )
-            yield "citations", {"citations": [c.model_dump() for c in _citations_for(included_chunks)]}
-            answer_parts: list[str] = []
+            answer_parts = []
             for piece in llm_client.generate_stream(SYSTEM_PROMPT, user_prompt):
                 answer_parts.append(piece)
                 yield "token", {"text": piece}
             answer = "".join(answer_parts)
+            citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
+            yield "citations", {"citations": [c.model_dump() for c in citations]}
 
         with session_factory() as write_session:
             get_or_create_conversation(write_session, conversation_id, owner_id)

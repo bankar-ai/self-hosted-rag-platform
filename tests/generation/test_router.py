@@ -79,6 +79,8 @@ def test_query_returns_answer_with_citations(monkeypatch, auth_headers):
             "page_start": 1,
             "page_end": 1,
             "source_filename": "doc.pdf",
+            "score": 0.9,
+            "reranked": False,
         }
     ]
 
@@ -417,8 +419,8 @@ def test_query_stream_returns_no_context_sse_when_retrieval_empty(auth_headers):
     assert response.headers["x-accel-buffering"] == "no"
     events = _parse_sse(response.text)
     assert events == [
-        ("citations", {"citations": []}),
         ("token", {"text": NO_CONTEXT_ANSWER}),
+        ("citations", {"citations": []}),
         ("done", {"conversation_id": None}),
     ]
 
@@ -452,7 +454,9 @@ def test_query_stream_returns_citations_tokens_and_done(monkeypatch, auth_header
 
     assert response.status_code == 200
     events = _parse_sse(response.text)
-    assert events[0] == (
+    assert events[0] == ("token", {"text": "the "})
+    assert events[1] == ("token", {"text": "answer [1]"})
+    assert events[2] == (
         "citations",
         {
             "citations": [
@@ -463,12 +467,12 @@ def test_query_stream_returns_citations_tokens_and_done(monkeypatch, auth_header
                     "page_start": 1,
                     "page_end": 1,
                     "source_filename": "doc.pdf",
+                    "score": 0.9,
+                    "reranked": False,
                 }
             ]
         },
     )
-    assert events[1] == ("token", {"text": "the "})
-    assert events[2] == ("token", {"text": "answer [1]"})
     assert events[3] == ("done", {"conversation_id": None})
 
 

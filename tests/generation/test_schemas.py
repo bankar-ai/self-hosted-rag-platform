@@ -31,6 +31,8 @@ def test_generation_response_round_trip():
         page_start=1,
         page_end=1,
         source_filename="doc.pdf",
+        score=0.9,
+        reranked=False,
     )
     response = GenerationResponse(answer="the answer [1]", citations=[citation])
 

@@ -30,7 +30,11 @@ class ConversationTurn(BaseModel):
 
 
 class Citation(BaseModel):
-    """Provenance for one chunk that was included in the answer's context."""
+    """Provenance for one chunk the answer actually cited with a `[n]` marker.
+
+    Only chunks referenced by an inline `[n]` marker in the answer text are included --
+    a chunk merely present in the LLM's context window but never cited is not (ERP-055).
+    """
 
     chunk_id: str
     document_id: str
@@ -38,6 +42,16 @@ class Citation(BaseModel):
     page_start: int
     page_end: int
     source_filename: str
+    score: float = Field(
+        description=(
+            "RetrievedChunk.score, unchanged: a fused RRF score (bounded to (0, 1]) unless "
+            "`reranked` is true, in which case it is the reranker's score instead -- the two "
+            "are not on a comparable scale (ERP-056)."
+        )
+    )
+    reranked: bool = Field(
+        description="Whether this query used rerank=True -- tells the caller how to interpret `score`."
+    )
 
 
 class GenerationResponse(BaseModel):

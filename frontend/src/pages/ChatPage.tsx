@@ -255,7 +255,15 @@ export default function ChatPage() {
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
                       {message.citations.map((citation, citationIndex) => (
                         <li key={citation.chunk_id}>
-                          [{citationIndex + 1}] {formatCitation(citation)}
+                          <details>
+                            <summary className="cursor-pointer">
+                              [{citationIndex + 1}] {formatCitation(citation)}
+                            </summary>
+                            <p className="mt-0.5 pl-3 text-slate-400">
+                              Relevance score: {citation.score.toFixed(3)}
+                              {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
+                            </p>
+                          </details>
                         </li>
                       ))}
                     </ul>

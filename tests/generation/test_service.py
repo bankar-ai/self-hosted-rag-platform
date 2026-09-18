@@ -96,10 +96,44 @@ def test_generate_builds_prompt_and_returns_citations(monkeypatch):
 
     assert response.answer == "the answer [1][2]"
     assert [c.chunk_id for c in response.citations] == ["c1", "c2"]
+    assert all(c.reranked is True for c in response.citations)
     assert len(fake_llm.calls) == 1
     system_prompt, user_prompt = fake_llm.calls[0]
     assert "[1]" in user_prompt and "[2]" in user_prompt
     assert "cite sources inline" in system_prompt.lower()
+
+
+def test_generate_only_returns_citations_the_answer_actually_references(monkeypatch):
+    # ERP-055: c2 was retrieved and included in the prompt's context window, but the model
+    # never cited it -- it must not appear in the response's citations.
+    chunks = [_chunk("c1"), _chunk("c2")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [1]")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert [c.chunk_id for c in response.citations] == ["c1"]
+    assert response.citations[0].reranked is False
+
+
+def test_generate_returns_no_citations_when_answer_cites_nothing(monkeypatch):
+    chunks = [_chunk("c1"), _chunk("c2")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer, no citations here")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert response.citations == []
+
+
+def test_generate_ignores_a_hallucinated_out_of_range_citation_marker(monkeypatch):
+    chunks = [_chunk("c1")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [1][5]")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert [c.chunk_id for c in response.citations] == ["c1"]
 
 
 def test_generate_passes_retrieval_params_through(monkeypatch):
@@ -335,14 +369,18 @@ def test_get_conversation_history_returns_all_messages_oldest_first():
     assert [m.role for m in history.messages] == ["user", "assistant"]
 
 
-def test_generate_stream_stateless_yields_citations_then_tokens_then_done(monkeypatch):
+def test_generate_stream_stateless_yields_tokens_then_citations_then_done(monkeypatch):
+    # Only c1 is cited ("[1]" appears in the streamed answer); c2 was in context but never
+    # referenced, so ERP-055 excludes it from the citations event.
     chunks = [_chunk("c1"), _chunk("c2")]
     monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
-    fake_llm = _FakeStreamingLLMClient(["Hello", " world"])
+    fake_llm = _FakeStreamingLLMClient(["Hello", " world [1]"])
 
     events = list(generate_stream("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm))
 
     assert events == [
+        ("token", {"text": "Hello"}),
+        ("token", {"text": " world [1]"}),
         (
             "citations",
             {
@@ -354,20 +392,12 @@ def test_generate_stream_stateless_yields_citations_then_tokens_then_done(monkey
                         "page_start": 1,
                         "page_end": 1,
                         "source_filename": "doc.pdf",
-                    },
-                    {
-                        "chunk_id": "c2",
-                        "document_id": "doc-1",
-                        "section_path": ["Intro"],
-                        "page_start": 1,
-                        "page_end": 1,
-                        "source_filename": "doc.pdf",
+                        "score": 0.9,
+                        "reranked": False,
                     },
                 ]
             },
         ),
-        ("token", {"text": "Hello"}),
-        ("token", {"text": " world"}),
         ("done", {"conversation_id": None}),
     ]
 
@@ -379,8 +409,8 @@ def test_generate_stream_stateless_short_circuits_on_empty_retrieval(monkeypatch
     events = list(generate_stream("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm))
 
     assert events == [
-        ("citations", {"citations": []}),
         ("token", {"text": NO_CONTEXT_ANSWER}),
+        ("citations", {"citations": []}),
         ("done", {"conversation_id": None}),
     ]
     assert fake_llm.stream_calls == []
