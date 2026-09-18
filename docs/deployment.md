@@ -96,6 +96,16 @@ auto-instrumented ones now reach Grafana Cloud without needing a local Prometheu
 **Prometheus/Mimir** datasource, query by metric name (e.g. `llm_generation_duration_seconds`) or
 filter by `service_name="self-hosted-rag-platform"`.
 
+## Frontend (Vercel)
+
+ERP-043 adds a Vite + React SPA (`frontend/`) deployed separately to Vercel, calling this
+backend directly over HTTPS. See `frontend/README.md` for local dev and deployment steps.
+
+The backend needs `CORS_ALLOWED_ORIGINS` (comma-separated, `app/core/cors.py`) set to the
+deployed frontend's origin -- without it, the browser blocks every cross-origin request
+outright. Local dev defaults to `http://localhost:5173` (Vite's default port) with no env var
+needed.
+
 ## Cross-project infrastructure options
 
 Hosting/compute/database/GPU choices for making this platform (and future sibling projects)

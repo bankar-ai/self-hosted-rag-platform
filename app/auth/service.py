@@ -207,6 +207,21 @@ def list_all_users() -> list[UserRecord]:
         return list_users(session)
 
 
+def get_user_profile(user_id: uuid.UUID) -> UserRecord:
+    """Return `user_id`'s own profile. Raises `UserNotFoundError` if unknown.
+
+    Backs `GET /auth/me` -- unlike `list_all_users`/admin endpoints, this is available to any
+    authenticated caller for their own ID only (`app/auth/router.py` always passes
+    `current_user.id`, never a caller-supplied one).
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = get_user_by_id(session, user_id)
+        if user is None:
+            raise UserNotFoundError(user_id)
+        return user
+
+
 def set_user_active_status(user_id: uuid.UUID, is_active: bool) -> UserRecord:
     """Enable or disable `user_id`'s account. Raises `UserNotFoundError` if unknown."""
     session_factory = get_session_factory()

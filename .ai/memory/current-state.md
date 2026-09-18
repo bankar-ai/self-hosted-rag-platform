@@ -89,13 +89,68 @@ Living summary of what exists in this repository right now. Update in place as s
 - **A saved Grafana Cloud dashboard ("AI Platforms -- Service Observability") now exists for demo/showcase use (2026-09-16)**, built to be reusable across future projects (Agentic AI, PEFT, LLMOps) via a `service_name` picker, not hardcoded to this repo. It uses **static options**, not live label-value auto-discovery -- Loki's `label_values()` variable query returned no results on this stack despite `service_name` being a real, directly-queryable label (confirmed working in raw LogQL queries); root cause untriaged, worked around by manually listing each service as a static option instead. Panels: log volume by level, recent traces (Tempo), errors-only log stream, all recent logs (Loki). See `D:\github-projects\gcp-deployment-tracker.md`'s "Observability" section for the exact how-to-extend steps. Considered and explicitly declined: Neon's native Grafana Cloud integration (requires the paid Scale plan, no free tier support -- would break this deployment's deliberate all-free-tier design) and a GCP Cloud Monitoring data source for VM infra metrics (skipped as unnecessary scope for now, app-level observability already covers demo needs). Two more throwaway verification test users were created and left in the live database during this session (`erp039-verify@example.com`, `dashboard-verify@example.com`), same known gap as ERP-038/039's own test users -- no delete-user endpoint exists yet -- closed by ERP-040 below.
 - **`DELETE /admin/users/{user_id}` (ERP-040, 2026-09-16)**: a genuine hard-delete admin endpoint, closing the cleanup gap the ERP-037/038/039/dashboard sessions kept running into. `app/auth/repository.py`'s new `delete_user_and_owned_data` deletes every row a user owns (conversation messages/conversations, chunks/documents, refresh tokens, OIDC identities) in FK-safe order before the user row itself, mirroring the existing `app.evaluation.repository.cleanup_eval_data` pattern; `app/auth/service.py`'s `delete_user` also best-effort deletes the user's per-owner FAISS index file (ERP-031) and blocks an admin from deleting their own account (409). **Live-verified**: the live deployment had no bootstrapped admin at all until this session -- created a real first admin (`ops-admin@self-hosted-rag-platform.internal`, credentials in the credentials store) directly via the repository layer, distinct from the pre-existing migration-seeded `system@internal` account (intentionally-invalid password hash, can't log in). Used it to delete all three throwaway test users left by ERP-038/039/the dashboard build; `GET /admin/users` confirmed only the two legitimate admins remain. Verified: ruff/mypy clean, full suite 381 passed, 96.66% coverage.
 
+- **ERP-041 re-verified retrieval-quality evaluation post-ERP-031 (2026-09-16)**: ran `uv run python -m app.evaluation.run` against real local Ollama and Postgres/Redis. Result: Precision@3=0.333, Recall@3=1.000, MRR=1.000 — an exact match to the ERP-029 baseline, confirming ERP-031's per-owner FAISS partitioning introduced no retrieval-quality regression. No code change needed. No PR (pure verification).
+- **ERP-042 shipped metrics to Grafana Cloud, completing the observability trio (2026-09-16)**: `app/core/telemetry.py`'s `MeterProvider` now attaches a push-based OTLP `PeriodicExportingMetricReader` alongside the existing pull-based `PrometheusMetricReader` (local dev unaffected), mirroring `_build_span_exporter()`/`_build_log_exporter()`'s exact protocol-selection pattern — no new dependency, no new env vars, and the existing `set:alloy-data-write` token turned out to already cover metrics ingestion (no new Grafana Cloud token needed). Deployed to the live VM; live-verified via the Grafana Cloud Explore UI (Prometheus datasource `grafanacloud-microstarfish1843-prom`): real requests against the live app produced `http_server_duration_milliseconds_bucket`/`http_server_active_requests`/`db_client_connections_usage` series filtered by `service_name="self-hosted-rag-platform"`. VM memory re-verified post-deploy at 368Mi available — an exact match to the existing 365-378MB baseline, confirming the push-based exporter costs nothing measurable, same as ERP-039's finding for logs. Verified: ruff/mypy clean, full suite 383 passed, 96.68% coverage. Docs: `docs/deployment.md`'s new "Metrics (Grafana Cloud)" section; `D:\github-projects\gcp-deployment-tracker.md`'s Observability table gained a metrics row. Merged to `develop` via PR #34, promoted to `main` via PR #35 (both 2026-09-16); `develop` and `main` were in sync as of that merge.
+
 ## Next Planned Work
 
-- Re-run the ERP-029 retrieval-quality evaluation harness against live Ollama (now reachable both locally and via the Modal deployment) to confirm no Precision@k/Recall@k/MRR regression from ERP-031's per-owner FAISS partitioning -- still unconfirmed.
-- Operators with pre-ERP-031 ingested data should run `uv run python -m app.embedding.migrate_to_per_owner` before deploying ERP-031, then manually remove the old shared `data/faiss_index.bin` once the new per-owner indexes are confirmed correct.
+- **ERP-047 is Done (2026-09-17)** [Bug] — the live VM outage from a PDF upload is fully fixed.
+  `docling`'s fallback parser now runs on a separate Cloud Run service
+  (`deploy/cloud_run_docling/`), called over HTTP with GCP IAM auth (no stored secret);
+  `docling`/`torch`/`transformers` (72 packages, including unneeded CUDA/nvidia wheels) are
+  entirely removed from the root project and the live VM's own `.venv`. Three real bugs found
+  and fixed during implementation/deployment (not just planned): a Windows temp-file-reopen
+  issue caught by a local smoke test before deploying; the container downloading `docling`'s
+  models from HuggingFace at *request* time and hitting HF's rate limit (fixed by baking models
+  into the Docker image at build time, `docling-tools models download`, mirroring
+  `deploy/modal_ollama.py`'s existing pattern, plus pointing `DocumentConverter` at that local
+  path explicitly); and a missing system library (`libxcb.so.1`) for `opencv-python` on
+  `python:3.12-slim`, a known "opencv in a slim Docker image" issue. Live-verified end-to-end:
+  `POST /parse` returned `200 OK` with zero HuggingFace network calls, and the VM's memory held
+  at 266-321Mi available throughout — matching the pre-incident baseline exactly, no spike.
+  Backend: 394 tests passed (was 387), 96.62% coverage. Merged via PR #40 and a follow-up fix
+  PR #41. See `.ai/tickets/ERP-047.md`'s Resolution for full detail.
+- **Modal workspace-disabled issue (2026-09-17), found during ERP-047's live verification and
+  resolved same-day**: the live deployment's Modal workspace (hosting Ollama for
+  embedding/generation) started returning `"modal-http: workspace ... is disabled"`, blocking
+  the embedding/generation stage of the pipeline (unrelated to ERP-047's own fix, which worked
+  correctly throughout). Root cause confirmed via the Modal dashboard: usage had hit the $1
+  usable-without-a-payment-method threshold on the Starter plan's $30/mo free credit, which
+  disables the workspace until a card is added. User added a payment method and set a **$0
+  spend limit** (Modal's hard-stop-on-any-real-charge setting — all workloads stop the instant
+  estimated charges would exceed the $30 free credit, so this stays genuinely free forever, by
+  design, rather than risking a surprise charge). Live-verified after the fix: a real
+  `POST /generation/query` against the live deployment returned `200` with a correct, grounded,
+  cited answer. `D:\github-projects\gcp-deployment-tracker.md`'s Modal row updated to record
+  the spend-limit setting for future reference.
+
+**Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
+`Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
+check what's still open from that session:
+
+- **ERP-044** [Improvement] — Document-scoped retrieval: no way to limit a chat query to
+  specific documents; `search()` always searches everything the caller owns. Needs a backend
+  design pass (filter parameter threaded through retrieval/generation), not just a frontend
+  tweak.
+- **ERP-045** [Improvement] — Answer feedback (thumbs up/down or similar): not implemented at
+  all yet, needs its own design (what's captured, where it's stored, whether it feeds ERP-030's
+  evaluation harness).
+- **ERP-046** [Lapse] — Retrieval has no relevance guardrail: a non-question ("hi") still
+  retrieves top-k chunks and gets a fully-cited answer about an unrelated document. Works exactly
+  as designed; the design never considered this case.
+
+All three are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
+`https://frontend-sigma-one-54.vercel.app`, iterated through two live-review bugfix rounds
+(PRs #38, #39: SPA-routing 404 on refresh, cross-user localStorage leakage, a page that could
+hang forever on a slow `/auth/me` fetch — all fixed) but not yet marked `Done` pending one more
+walkthrough through the actual UI (backend confirmed working end-to-end via direct API calls —
+ingestion, docling fallback, and generation/chat all verified `200` as of 2026-09-17/18 — the
+remaining gap is clicking through the real deployed frontend once more, not a known bug).
+
+**Older deferred items:**
+
 - Self-service identity linking for an already-logged-in local user to add an OIDC identity (ERP-032 only supports auto-link-by-verified-email during login, not an explicit "link my account" flow).
 - Additional OIDC providers beyond Google (Microsoft Entra ID, Okta, self-hosted Keycloak/Authentik) are supported by ERP-032's provider-agnostic design but not concretely verified end-to-end yet.
 - Admin cross-user data visibility — the `admin` role is currently a distinction only (checked, but no elevated privilege); every ownership check is a bare `owner_id` equality with no admin bypass. Deferred rather than added untested at the tail of ERP-026 (surfaced by the final whole-branch review).
 - Self-service admin account creation — deliberately not exposed via `POST /auth/register`; still a manual/repository-level step (see ERP-040's resolution note for how the live deployment's first admin, `ops-admin@self-hosted-rag-platform.internal`, was created this way), deferred for future follow-up.
-- Metrics export to Grafana Cloud is not yet ticketed (current Prometheus exporter is pull-based; the VM has nothing to scrape it, and there's no established approach yet -- remote-write agent vs push-based OTLP metrics).
-- Otherwise, no non-deferred work remains. Both halves of "Evaluation" are done (ERP-029 retrieval, ERP-030 generation); both halves of live-deployment observability are done (ERP-038 traces, ERP-039 logs); admin user cleanup is done (ERP-040); ERP-012's three deferred retrieval follow-ups, generation, conversation memory, streaming, and observability were all closed out in prior sessions. Everything left is one of the explicitly-deferred items above, or the future LLMOps & Evaluation Platform (a separate repo, not work here).
+- Operators with pre-ERP-031 ingested data should run `uv run python -m app.embedding.migrate_to_per_owner` before deploying ERP-031, then manually remove the old shared `data/faiss_index.bin` once the new per-owner indexes are confirmed correct.

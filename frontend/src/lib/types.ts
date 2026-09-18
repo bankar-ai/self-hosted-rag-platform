@@ -1,0 +1,55 @@
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: "bearer";
+}
+
+export interface UserResponse {
+  id: string;
+  email: string;
+  role: "admin" | "user";
+  is_active: boolean;
+}
+
+export interface Citation {
+  chunk_id: string;
+  document_id: string;
+  section_path: string[];
+  page_start: number;
+  page_end: number;
+  source_filename: string;
+}
+
+export interface GenerationRequest {
+  query: string;
+  top_k?: number;
+  rerank?: boolean;
+  expand_sections?: boolean;
+  conversation_id?: string;
+}
+
+export type JobStatus = "pending" | "processing" | "done" | "failed";
+
+export interface Chunk {
+  chunk_id: string;
+  document_id: string;
+  chunk_index: number;
+  text: string;
+  section_path: string[];
+  page_start: number;
+  page_end: number;
+  char_count: number;
+  parser_used: "fast" | "quality";
+  source_filename: string;
+}
+
+export interface IngestResponse {
+  document_id: string;
+  chunks: Chunk[];
+}
+
+export interface JobStatusResponse {
+  status: JobStatus;
+  result: IngestResponse | null;
+  error: string | null;
+}

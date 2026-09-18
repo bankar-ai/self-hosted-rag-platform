@@ -21,5 +21,6 @@ The platform will eventually support
 - Streaming Responses
 - Docker Deployment
 - CI/CD
+- Web UI (chat, document ingestion, and account/admin views over the existing API)
 
 These features should influence architectural decisions even before they are implemented.
