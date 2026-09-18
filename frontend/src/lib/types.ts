@@ -53,3 +53,34 @@ export interface JobStatusResponse {
   result: IngestResponse | null;
   error: string | null;
 }
+
+export interface DocumentSummary {
+  document_id: string;
+  filename: string;
+  created_at: string;
+}
+
+export interface DocumentListResponse {
+  documents: DocumentSummary[];
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  created_at: string;
+  preview: string | null;
+}
+
+export interface ConversationListResponse {
+  conversations: ConversationSummary[];
+}
+
+export interface ConversationMessage {
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ConversationHistoryResponse {
+  conversation_id: string;
+  messages: ConversationMessage[];
+}

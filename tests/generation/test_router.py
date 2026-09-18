@@ -305,6 +305,93 @@ def test_get_conversation_returns_404_when_conversation_belongs_to_another_user(
     assert response.status_code == 404
 
 
+def test_list_conversations_empty_for_new_user(auth_headers):
+    response = client.get("/conversations", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"conversations": []}
+
+
+def test_list_conversations_returns_newest_first_with_preview(monkeypatch):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    headers = register_and_login(client, "generation-list-conversations")
+    conv_a, conv_b = str(uuid.uuid4()), str(uuid.uuid4())
+
+    client.post(
+        "/generation/query", json={"query": "first question", "conversation_id": conv_a}, headers=headers
+    )
+    client.post(
+        "/generation/query", json={"query": "second question", "conversation_id": conv_b}, headers=headers
+    )
+
+    response = client.get("/conversations", headers=headers)
+
+    assert response.status_code == 200
+    conversations = response.json()["conversations"]
+    assert [c["conversation_id"] for c in conversations] == [conv_b, conv_a]
+    assert conversations[0]["preview"] == "second question"
+    assert conversations[1]["preview"] == "first question"
+
+
+def test_list_conversations_does_not_include_another_users_conversations(monkeypatch):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    headers_a = register_and_login(client, "generation-list-conversations-owner-a")
+    headers_b = register_and_login(client, "generation-list-conversations-owner-b")
+
+    client.post(
+        "/generation/query",
+        json={"query": "a's question", "conversation_id": str(uuid.uuid4())},
+        headers=headers_a,
+    )
+
+    response = client.get("/conversations", headers=headers_b)
+
+    assert response.status_code == 200
+    assert response.json() == {"conversations": []}
+
+
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
     events = []
     for block in text.strip("\n").split("\n\n"):

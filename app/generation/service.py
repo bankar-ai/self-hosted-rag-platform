@@ -13,13 +13,17 @@ from app.generation.repository import (
     get_all_messages,
     get_conversation,
     get_conversation_owner_id,
+    get_first_user_messages,
     get_or_create_conversation,
     get_recent_messages,
+    list_conversations_for_owner,
 )
 from app.generation.rewrite import rewrite_query
 from app.generation.schemas import (
     Citation,
     ConversationHistoryResponse,
+    ConversationListResponse,
+    ConversationSummary,
     ConversationTurn,
     GenerationResponse,
     Message,
@@ -252,3 +256,26 @@ def get_conversation_history(
         for record in records
     ]
     return ConversationHistoryResponse(conversation_id=conversation_id, messages=messages)
+
+
+def list_conversations(owner_id: uuid.UUID) -> ConversationListResponse:
+    """Return `owner_id`'s conversations, newest first, each with a preview of its first message.
+
+    This is the fix for conversation history not surviving a login on a new browser/device:
+    full history was always persisted server-side (see `get_conversation_history`), but there
+    was previously no way to enumerate a caller's conversations at all -- the frontend sidebar
+    relied solely on a client-side cache that a fresh browser/device never had.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        conversations = list_conversations_for_owner(session, owner_id)
+        previews = get_first_user_messages(session, [c.id for c in conversations])
+
+    return ConversationListResponse(
+        conversations=[
+            ConversationSummary(
+                conversation_id=c.id, created_at=c.created_at, preview=previews.get(c.id)
+            )
+            for c in conversations
+        ]
+    )

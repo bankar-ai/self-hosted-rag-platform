@@ -9,6 +9,7 @@ from app.generation.service import (
     generate,
     generate_stream,
     get_conversation_history,
+    list_conversations,
 )
 from app.retrieval.schemas import RetrievedChunk
 
@@ -480,3 +481,37 @@ def test_generate_stream_exception_mid_stream_yields_error_and_persists_nothing(
     with session_factory() as session:
         messages = get_recent_messages(session, conversation_id, limit=10)
     assert messages == []
+
+
+def test_list_conversations_returns_newest_first_with_preview():
+    owner_id = uuid.uuid4()
+    conv_a, conv_b = uuid.uuid4(), uuid.uuid4()
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    with session_factory() as session:
+        get_or_create_conversation(session, conv_a, owner_id)
+        append_message(session, conv_a, "user", "first conversation's opening question")
+        session.commit()
+
+    with session_factory() as session:
+        get_or_create_conversation(session, conv_b, owner_id)
+        append_message(session, conv_b, "user", "second conversation's opening question")
+        session.commit()
+
+    response = list_conversations(owner_id)
+
+    assert [c.conversation_id for c in response.conversations] == [conv_b, conv_a]
+    assert response.conversations[0].preview == "second conversation's opening question"
+    assert response.conversations[1].preview == "first conversation's opening question"
+
+
+def test_list_conversations_no_conversations_returns_empty_list():
+    response = list_conversations(uuid.uuid4())
+
+    assert response.conversations == []

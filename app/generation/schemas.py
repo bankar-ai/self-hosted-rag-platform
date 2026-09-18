@@ -65,3 +65,17 @@ class ConversationHistoryResponse(BaseModel):
 
     conversation_id: uuid.UUID
     messages: list[Message]
+
+
+class ConversationSummary(BaseModel):
+    """One of the caller's conversations, with a preview of its first message."""
+
+    conversation_id: uuid.UUID
+    created_at: datetime
+    preview: str | None = None
+
+
+class ConversationListResponse(BaseModel):
+    """The caller's conversations, newest first."""
+
+    conversations: list[ConversationSummary]

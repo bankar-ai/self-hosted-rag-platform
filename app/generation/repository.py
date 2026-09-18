@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.generation.models import ConversationMessageRecord, ConversationRecord
@@ -86,3 +86,47 @@ def get_all_messages(session: Session, conversation_id: uuid.UUID) -> list[Conve
             .order_by(ConversationMessageRecord.sequence.asc())
         ).all()
     )
+
+
+def list_conversations_for_owner(session: Session, owner_id: uuid.UUID) -> list[ConversationRecord]:
+    """Return `owner_id`'s conversations, newest first."""
+    return list(
+        session.scalars(
+            select(ConversationRecord)
+            .where(ConversationRecord.owner_id == owner_id)
+            .order_by(ConversationRecord.created_at.desc())
+        ).all()
+    )
+
+
+def get_first_user_messages(
+    session: Session, conversation_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """Return each conversation's first user-role message content, keyed by conversation_id.
+
+    Two queries rather than N+1: a subquery finds each conversation's minimum `sequence`
+    among its user messages, then one join fetches those rows' content. A conversation with
+    no user message yet is simply absent from the result. `{}` for empty input.
+    """
+    if not conversation_ids:
+        return {}
+    first_sequence = (
+        select(
+            ConversationMessageRecord.conversation_id,
+            func.min(ConversationMessageRecord.sequence).label("first_sequence"),
+        )
+        .where(
+            ConversationMessageRecord.conversation_id.in_(conversation_ids),
+            ConversationMessageRecord.role == "user",
+        )
+        .group_by(ConversationMessageRecord.conversation_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(ConversationMessageRecord.conversation_id, ConversationMessageRecord.content).join(
+            first_sequence,
+            (ConversationMessageRecord.conversation_id == first_sequence.c.conversation_id)
+            & (ConversationMessageRecord.sequence == first_sequence.c.first_sequence),
+        )
+    ).all()
+    return {row.conversation_id: row.content for row in rows}

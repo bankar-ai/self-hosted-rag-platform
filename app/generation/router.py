@@ -11,12 +11,18 @@ from fastapi.responses import StreamingResponse
 
 from app.auth.dependencies import get_current_user
 from app.auth.schemas import CurrentUser
-from app.generation.schemas import ConversationHistoryResponse, GenerationQuery, GenerationResponse
+from app.generation.schemas import (
+    ConversationHistoryResponse,
+    ConversationListResponse,
+    GenerationQuery,
+    GenerationResponse,
+)
 from app.generation.service import (
     ConversationAccessDeniedError,
     generate,
     generate_stream,
     get_conversation_history,
+    list_conversations,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +83,14 @@ def query_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@conversations_router.get("")
+def list_conversations_endpoint(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ConversationListResponse:
+    """Return the caller's conversations, newest first."""
+    return list_conversations(current_user.id)
 
 
 @conversations_router.get("/{conversation_id}")
