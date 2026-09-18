@@ -198,7 +198,7 @@ def test_generate_parses_mixed_single_and_comma_separated_citations(monkeypatch)
 def test_generate_passes_retrieval_params_through(monkeypatch):
     captured = {}
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         captured["args"] = (query, top_k, owner_id, rerank, expand_sections)
         return [_chunk("c1")]
 
@@ -274,7 +274,7 @@ def test_generate_second_turn_rewrites_query_using_history(monkeypatch):
 
     captured_retrieval_query = {}
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         captured_retrieval_query["query"] = query
         return [_chunk("c1")]
 
@@ -565,7 +565,7 @@ def test_generate_stream_second_turn_rewrites_query_using_history(monkeypatch):
 
     captured_retrieval_query = {}
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         captured_retrieval_query["query"] = query
         return [_chunk("c1")]
 

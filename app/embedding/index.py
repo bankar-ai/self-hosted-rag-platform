@@ -69,20 +69,33 @@ class FaissIndex:
         vector = cast("np.ndarray[tuple[int], np.dtype[np.float32]]", self._index.reconstruct(vector_id))
         return vector.tolist()
 
-    def search(self, vector: list[float], k: int) -> list[tuple[int, float]]:
+    def search(
+        self, vector: list[float], k: int, allowed_vector_ids: list[int] | None = None
+    ) -> list[tuple[int, float]]:
         """Return up to `k` nearest `(vector_id, distance)` pairs, nearest-first.
 
-        Empty list if the index has no vectors or `k <= 0`. Padding entries FAISS
-        returns when the index has fewer than `k` vectors (`vector_id == -1`) are
-        dropped.
+        Empty list if the index has no vectors, `k <= 0`, or `allowed_vector_ids` is an empty
+        list (explicitly "search nothing", distinct from `None` meaning "no restriction").
+        Padding entries FAISS returns when the index has fewer than `k` vectors (`vector_id ==
+        -1`) are dropped.
+
+        `allowed_vector_ids`, if given, restricts the search to only those IDs via FAISS's own
+        `IDSelectorBatch` at search time (ERP-044) -- not a post-hoc filter over an unrestricted
+        top-`k`, which could miss a real match in a restricted document set entirely if it
+        didn't happen to rank in the top `k` overall.
         """
         with get_tracer().start_as_current_span("faiss.search") as span:
             span.set_attribute("faiss.k", k)
-            if self._index.ntotal == 0 or k <= 0:
+            if self._index.ntotal == 0 or k <= 0 or allowed_vector_ids == []:
                 span.set_attribute("faiss.hits", 0)
                 return []
             query = np.array([vector], dtype="float32")
-            distances, ids = self._index.search(query, k)
+            if allowed_vector_ids is None:
+                distances, ids = self._index.search(query, k)
+            else:
+                selector = faiss.IDSelectorBatch(np.array(allowed_vector_ids, dtype="int64"))
+                params = faiss.SearchParameters(sel=selector)  # type: ignore[call-arg]
+                distances, ids = self._index.search(query, k, params=params)
             hits = [
                 (int(vector_id), float(distance))
                 for vector_id, distance in zip(ids[0], distances[0], strict=True)
@@ -147,10 +160,20 @@ class OwnerFaissIndexStore:
             index.add(vector_ids, vectors)
             index.save()
 
-    def search(self, owner_id: uuid.UUID, vector: list[float], k: int) -> list[tuple[int, float]]:
-        """Search only `owner_id`'s index. `[]` if that owner has no index yet."""
+    def search(
+        self,
+        owner_id: uuid.UUID,
+        vector: list[float],
+        k: int,
+        allowed_vector_ids: list[int] | None = None,
+    ) -> list[tuple[int, float]]:
+        """Search only `owner_id`'s index. `[]` if that owner has no index yet.
+
+        `allowed_vector_ids` restricts to a subset (ERP-044's document-scoped retrieval) --
+        see `FaissIndex.search` for the `None` vs. `[]` distinction.
+        """
         with self._lock_for(owner_id):
-            return self._index_for(owner_id).search(vector, k)
+            return self._index_for(owner_id).search(vector, k, allowed_vector_ids=allowed_vector_ids)
 
     def remove(self, owner_id: uuid.UUID, vector_ids: list[int]) -> None:
         """Remove `vector_ids` from `owner_id`'s index and persist it. No-op if `vector_ids` is empty."""

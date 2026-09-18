@@ -18,7 +18,7 @@ def auth_headers():
 def _stub_generation_backend(monkeypatch):
     """Stub retrieval and the LLM client so no real Ollama/Postgres call is made."""
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         return []
 
     monkeypatch.setattr("app.generation.service.retrieval_search", _fake_search)
@@ -85,6 +85,43 @@ def test_query_returns_answer_with_citations(monkeypatch, auth_headers):
     ]
 
 
+def test_query_passes_document_ids_through_to_retrieval(monkeypatch, auth_headers):
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    captured = {}
+
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
+        captured["document_ids"] = document_ids
+        return [chunk]
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", _fake_search)
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer [1]"
+    )
+
+    response = client.post(
+        "/generation/query",
+        json={"query": "what is X?", "document_ids": ["doc-1"]},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert captured["document_ids"] == ["doc-1"]
+
+
 def test_query_returns_503_when_llm_backend_unavailable(monkeypatch, auth_headers):
     from app.retrieval.schemas import RetrievedChunk
 
@@ -139,7 +176,7 @@ def test_query_with_conversation_id_continues_across_two_calls(monkeypatch, auth
     )
     retrieval_queries = []
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         retrieval_queries.append(query)
         return [chunk]
 
@@ -743,7 +780,7 @@ def test_query_stream_with_conversation_id_continues_across_two_calls(monkeypatc
     )
     retrieval_queries = []
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         retrieval_queries.append(query)
         return [chunk]
 

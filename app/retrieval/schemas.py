@@ -10,6 +10,14 @@ class RetrievalQuery(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     rerank: bool = Field(default=False)
     expand_sections: bool = Field(default=False)
+    document_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Restrict the search to these document IDs (ERP-044). Omitted/null searches "
+            "everything the caller owns, unchanged from before this field existed; an empty "
+            "list explicitly searches nothing and returns no results."
+        ),
+    )
 
 
 class RetrievedChunk(BaseModel):

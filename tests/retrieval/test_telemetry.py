@@ -13,7 +13,7 @@ class _StubEmbeddingClient:
 
 
 class _StubFaissIndexStore:
-    def search(self, owner_id, vector, k):
+    def search(self, owner_id, vector, k, allowed_vector_ids=None):
         return []
 
 
