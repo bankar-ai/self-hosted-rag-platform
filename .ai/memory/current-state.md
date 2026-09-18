@@ -110,15 +110,19 @@ Living summary of what exists in this repository right now. Update in place as s
   at 266-321Mi available throughout — matching the pre-incident baseline exactly, no spike.
   Backend: 394 tests passed (was 387), 96.62% coverage. Merged via PR #40 and a follow-up fix
   PR #41. See `.ai/tickets/ERP-047.md`'s Resolution for full detail.
-- **A separate, unrelated issue surfaced during ERP-047's live verification**: the live
-  deployment's Modal workspace (hosting Ollama for embedding/generation) is returning
-  `"modal-http: workspace ... is disabled"` — likely tied to Modal's billing tier (usage was at
-  $1.03 against the "$1 usable without a payment method" threshold, per the live billing check
-  during this same session). This blocks the *next* pipeline stage after parsing (embedding),
-  so full end-to-end ingestion is currently broken on the live deployment even though ERP-047's
-  own fix works correctly. Not yet ticketed or investigated further — flagged to the user,
-  needs a decision (check Modal dashboard, possibly add a payment method) before the live app
-  is fully functional again.
+- **Modal workspace-disabled issue (2026-09-17), found during ERP-047's live verification and
+  resolved same-day**: the live deployment's Modal workspace (hosting Ollama for
+  embedding/generation) started returning `"modal-http: workspace ... is disabled"`, blocking
+  the embedding/generation stage of the pipeline (unrelated to ERP-047's own fix, which worked
+  correctly throughout). Root cause confirmed via the Modal dashboard: usage had hit the $1
+  usable-without-a-payment-method threshold on the Starter plan's $30/mo free credit, which
+  disables the workspace until a card is added. User added a payment method and set a **$0
+  spend limit** (Modal's hard-stop-on-any-real-charge setting — all workloads stop the instant
+  estimated charges would exceed the $30 free credit, so this stays genuinely free forever, by
+  design, rather than risking a surprise charge). Live-verified after the fix: a real
+  `POST /generation/query` against the live deployment returned `200` with a correct, grounded,
+  cited answer. `D:\github-projects\gcp-deployment-tracker.md`'s Modal row updated to record
+  the spend-limit setting for future reference.
 
 **Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
@@ -139,8 +143,9 @@ All three are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed
 `https://frontend-sigma-one-54.vercel.app`, iterated through two live-review bugfix rounds
 (PRs #38, #39: SPA-routing 404 on refresh, cross-user localStorage leakage, a page that could
 hang forever on a slow `/auth/me` fetch — all fixed) but not yet marked `Done` pending one more
-walkthrough (currently blocked on the Modal workspace issue above for the chat half of that
-walkthrough).
+walkthrough through the actual UI (backend confirmed working end-to-end via direct API calls —
+ingestion, docling fallback, and generation/chat all verified `200` as of 2026-09-17/18 — the
+remaining gap is clicking through the real deployed frontend once more, not a known bug).
 
 **Older deferred items:**
 
