@@ -18,6 +18,8 @@ export interface Citation {
   page_start: number;
   page_end: number;
   source_filename: string;
+  score: number;
+  reranked: boolean;
 }
 
 export interface GenerationRequest {
@@ -52,4 +54,35 @@ export interface JobStatusResponse {
   status: JobStatus;
   result: IngestResponse | null;
   error: string | null;
+}
+
+export interface DocumentSummary {
+  document_id: string;
+  filename: string;
+  created_at: string;
+}
+
+export interface DocumentListResponse {
+  documents: DocumentSummary[];
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  created_at: string;
+  preview: string | null;
+}
+
+export interface ConversationListResponse {
+  conversations: ConversationSummary[];
+}
+
+export interface ConversationMessage {
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface ConversationHistoryResponse {
+  conversation_id: string;
+  messages: ConversationMessage[];
 }

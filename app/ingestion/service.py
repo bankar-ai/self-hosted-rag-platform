@@ -2,10 +2,12 @@
 
 import uuid
 
+from app.core.db import get_session_factory
 from app.ingestion.chunker import chunk_markdown
 from app.ingestion.config import IngestionSettings
 from app.ingestion.parsers import parse_pdf
-from app.ingestion.schemas import Chunk, IngestResponse
+from app.ingestion.repository import list_documents_for_owner
+from app.ingestion.schemas import Chunk, DocumentListResponse, DocumentSummary, IngestResponse
 
 
 def ingest_pdf(pdf_path: str, source_filename: str, settings: IngestionSettings) -> IngestResponse:
@@ -31,3 +33,23 @@ def ingest_pdf(pdf_path: str, source_filename: str, settings: IngestionSettings)
     ]
 
     return IngestResponse(document_id=document_id, chunks=chunks)
+
+
+def list_documents(owner_id: uuid.UUID) -> DocumentListResponse:
+    """Return `owner_id`'s successfully ingested documents, newest first.
+
+    Only covers documents that finished ingestion (a `DocumentRecord` row is only created
+    once `embed_and_persist` succeeds) -- a still-pending/processing/failed upload has no
+    row here at all, and stays purely a client-tracked job until it either succeeds (and
+    shows up in this list) or is dismissed client-side.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        records = list_documents_for_owner(session, owner_id)
+
+    return DocumentListResponse(
+        documents=[
+            DocumentSummary(document_id=r.document_id, filename=r.filename, created_at=r.created_at)
+            for r in records
+        ]
+    )

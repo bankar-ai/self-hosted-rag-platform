@@ -1,9 +1,12 @@
 import uuid
 
 from app.core.db import get_session_factory
+from app.ingestion.models import ChunkRecord, DocumentRecord
 from app.ingestion.repository import (
+    delete_document,
     get_chunks_by_vector_ids,
     get_sibling_chunks,
+    list_documents_for_owner,
     save_document_and_chunks,
     search_chunks_by_text,
 )
@@ -169,3 +172,90 @@ def test_get_sibling_chunks_no_matching_section_returns_empty_list():
 
     with session_factory() as session:
         assert get_sibling_chunks(session, document_id, ["Nonexistent Section"]) == []
+
+
+def test_list_documents_for_owner_returns_newest_first():
+    # Each document is saved in its own committed transaction, same as real ingestion jobs
+    # (each an independent background task) -- `created_at` is a `server_default=func.now()`
+    # column, which is the *transaction's* start time, so two rows saved in one transaction
+    # (as separate ingestion jobs never are) would tie and make ordering ambiguous.
+    owner_id = uuid.uuid4()
+    doc_a, doc_b = f"doc-list-a-{owner_id}", f"doc-list-b-{owner_id}"
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    with session_factory() as session:
+        save_document_and_chunks(session, doc_a, "a.pdf", [_chunk(doc_a, 0)], owner_id)
+        session.commit()
+
+    with session_factory() as session:
+        save_document_and_chunks(session, doc_b, "b.pdf", [_chunk(doc_b, 0)], owner_id)
+        session.commit()
+
+    with session_factory() as session:
+        documents = list_documents_for_owner(session, owner_id)
+
+    assert [d.document_id for d in documents] == [doc_b, doc_a]
+
+
+def test_list_documents_for_owner_excludes_other_owners_documents():
+    owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert list_documents_for_owner(session, owner_id) == []
+
+
+def test_delete_document_removes_document_and_chunks_returns_vector_ids():
+    document_id = "doc-delete-repo-test"
+    chunks = [_chunk(document_id, 0), _chunk(document_id, 1)]
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        records = save_document_and_chunks(session, document_id, "doc.pdf", chunks, _TEST_OWNER_ID)
+        session.commit()
+        expected_vector_ids = {r.vector_id for r in records}
+
+    with session_factory() as session:
+        vector_ids = delete_document(session, document_id, _TEST_OWNER_ID)
+        session.commit()
+
+        assert vector_ids is not None
+        assert set(vector_ids) == expected_vector_ids
+
+    with session_factory() as session:
+        assert session.get(DocumentRecord, document_id) is None
+        assert session.query(ChunkRecord).filter(ChunkRecord.document_id == document_id).count() == 0
+
+
+def test_delete_document_unknown_document_returns_none():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert delete_document(session, "does-not-exist", _TEST_OWNER_ID) is None
+
+
+def test_delete_document_wrong_owner_returns_none_and_deletes_nothing():
+    document_id = "doc-delete-wrong-owner-repo-test"
+    other_owner_id = uuid.uuid4()
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=other_owner_id, email=f"{other_owner_id}@test", hashed_password="x"))
+        session.flush()
+        save_document_and_chunks(session, document_id, "doc.pdf", [_chunk(document_id, 0)], _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        assert delete_document(session, document_id, other_owner_id) is None
+
+    with session_factory() as session:
+        assert session.get(DocumentRecord, document_id) is not None

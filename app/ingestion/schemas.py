@@ -1,5 +1,6 @@
 """Pydantic schemas for ingestion API requests, responses, and job status."""
 
+from datetime import datetime
 from enum import Enum
 from typing import Literal
 
@@ -26,6 +27,20 @@ class IngestResponse(BaseModel):
 
     document_id: str
     chunks: list[Chunk]
+
+
+class DocumentSummary(BaseModel):
+    """One of the caller's successfully ingested documents."""
+
+    document_id: str
+    filename: str
+    created_at: datetime
+
+
+class DocumentListResponse(BaseModel):
+    """The caller's successfully ingested documents, newest first."""
+
+    documents: list[DocumentSummary]
 
 
 class JobStatus(str, Enum):

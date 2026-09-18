@@ -6,8 +6,10 @@ from app.generation.repository import (
     get_all_messages,
     get_conversation,
     get_conversation_owner_id,
+    get_first_user_messages,
     get_or_create_conversation,
     get_recent_messages,
+    list_conversations_for_owner,
 )
 
 _TEST_OWNER_ID = uuid.uuid4()
@@ -170,3 +172,73 @@ def test_get_conversation_owner_id_returns_owner_for_existing_conversation():
 
     with session_factory() as session:
         assert get_conversation_owner_id(session, conversation_id) == _TEST_OWNER_ID
+
+
+def test_list_conversations_for_owner_returns_newest_first():
+    # Each conversation is created and committed in its own transaction, same as real usage
+    # (separate requests) -- `created_at` is the *transaction's* start time, so two rows
+    # created in one transaction would tie and make ordering ambiguous.
+    owner_id = uuid.uuid4()
+    conv_a, conv_b = uuid.uuid4(), uuid.uuid4()
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    with session_factory() as session:
+        get_or_create_conversation(session, conv_a, owner_id)
+        session.commit()
+
+    with session_factory() as session:
+        get_or_create_conversation(session, conv_b, owner_id)
+        session.commit()
+
+    with session_factory() as session:
+        conversations = list_conversations_for_owner(session, owner_id)
+
+    assert [c.id for c in conversations] == [conv_b, conv_a]
+
+
+def test_list_conversations_for_owner_excludes_other_owners():
+    owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert list_conversations_for_owner(session, owner_id) == []
+
+
+def test_get_first_user_messages_returns_earliest_user_message_per_conversation():
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        append_message(session, conversation_id, "user", "first question")
+        append_message(session, conversation_id, "assistant", "an answer")
+        append_message(session, conversation_id, "user", "follow-up question")
+        session.commit()
+
+    with session_factory() as session:
+        previews = get_first_user_messages(session, [conversation_id])
+
+    assert previews == {conversation_id: "first question"}
+
+
+def test_get_first_user_messages_empty_input_returns_empty_dict():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert get_first_user_messages(session, []) == {}
+
+
+def test_get_first_user_messages_conversation_with_no_messages_is_absent():
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        assert get_first_user_messages(session, [conversation_id]) == {}

@@ -45,3 +45,53 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 
   return rawFetch(path, init);
 }
+
+interface UploadResult {
+  ok: boolean;
+  status: number;
+  body: unknown;
+}
+
+function rawUpload(path: string, file: File, onProgress: (fraction: number) => void): Promise<UploadResult> {
+  return new Promise((resolve, reject) => {
+    const tokens = getTokens();
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}${path}`);
+    if (tokens) xhr.setRequestHeader("Authorization", `Bearer ${tokens.accessToken}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        body = null;
+      }
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, body });
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    const formData = new FormData();
+    formData.append("file", file);
+    xhr.send(formData);
+  });
+}
+
+/**
+ * Upload `file` to `path` via `XMLHttpRequest` (not `fetch`, which has no reliable
+ * upload-progress event), reporting transfer progress as a 0-1 fraction via `onProgress`.
+ * Mirrors `apiFetch`'s 401-refresh-and-retry behavior once, for parity with ordinary requests.
+ */
+export async function uploadWithProgress(
+  path: string,
+  file: File,
+  onProgress: (fraction: number) => void
+): Promise<UploadResult> {
+  const first = await rawUpload(path, file, onProgress);
+  if (first.status !== 401) return first;
+
+  const refreshed = await tryRefresh();
+  if (!refreshed) return first;
+
+  return rawUpload(path, file, onProgress);
+}

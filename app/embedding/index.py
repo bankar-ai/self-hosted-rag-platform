@@ -42,6 +42,13 @@ class FaissIndex:
         matrix = np.array(vectors, dtype="float32")
         self._index.add_with_ids(matrix, ids)
 
+    def remove(self, vector_ids: list[int]) -> None:
+        """Remove `vector_ids` from the index. No-op if empty; unknown ids are silently ignored."""
+        if not vector_ids:
+            return
+        ids = np.array(vector_ids, dtype="int64")
+        self._index.remove_ids(ids)  # type: ignore[arg-type]
+
     def save(self) -> None:
         """Persist the index to `path`, creating parent directories if needed."""
         directory = os.path.dirname(self._path)
@@ -144,3 +151,12 @@ class OwnerFaissIndexStore:
         """Search only `owner_id`'s index. `[]` if that owner has no index yet."""
         with self._lock_for(owner_id):
             return self._index_for(owner_id).search(vector, k)
+
+    def remove(self, owner_id: uuid.UUID, vector_ids: list[int]) -> None:
+        """Remove `vector_ids` from `owner_id`'s index and persist it. No-op if `vector_ids` is empty."""
+        if not vector_ids:
+            return
+        with self._lock_for(owner_id):
+            index = self._index_for(owner_id)
+            index.remove(vector_ids)
+            index.save()

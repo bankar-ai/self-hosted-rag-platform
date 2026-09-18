@@ -106,6 +106,51 @@ deployed frontend's origin -- without it, the browser blocks every cross-origin 
 outright. Local dev defaults to `http://localhost:5173` (Vite's default port) with no env var
 needed.
 
+## Upload size ceiling (ERP-051)
+
+`INGESTION_MAX_UPLOAD_SIZE_BYTES` is set to 20MB (`app/ingestion/config.py`) -- previously 50MB,
+an arbitrary resource-exhaustion guard never validated against real capacity. Live-verified
+against the actual deployment (2026-09-18), not assumed:
+
+- **A realistic ~15MB PDF** (6 pages, image-heavy -- the shape most real "large" PDFs actually
+  are) processed via the fast path in **~75-90 seconds** end to end, VM memory stable throughout.
+- **A deliberately pathological 18MB PDF** (1305 pages of dense text -- an unusually high
+  page/chunk count for that byte size, not representative of typical uploads) took **30+ minutes**
+  and was still processing when last checked. VM memory stayed bounded (never below ~250MB
+  available) and the service never became unresponsive, but this is not an acceptable user-facing
+  wait. The 20MB byte-size cap alone does not bound processing time for pathological
+  page-dense content -- a future page-count or chunk-count limit may be worth adding if this
+  shape of upload turns out to be common in practice (not observed yet, this was a synthetic
+  worst-case test).
+- **Scanned/OCR-fallback path** (ERP-059, below) separately verified at a smaller size.
+
+**Practical takeaway**: 20MB is a safe *byte-size* ceiling for realistically-shaped PDFs. It does
+not, by itself, bound worst-case processing time for an unusually page-dense document at that
+same size.
+
+## Scanned/image-based PDFs (OCR) — live-verified (ERP-059)
+
+Confirmed end-to-end against the live deployment (2026-09-18): a real image-based PDF (rendered
+text with no text layer, forcing the OCR fallback) was correctly routed to the Cloud Run
+`docling` service (`parser_used: "quality"` in the job result), and the OCR-extracted text was
+byte-for-byte correct against the source image. Took ~2 minutes end to end (Cloud Run cold start
+included, well within its 480s/600s client/service timeout budget). VM memory was completely
+flat throughout (~388-397MB used, matching baseline) -- confirming the OCR workload genuinely
+never touches the VM's own tight memory budget, as ERP-047 designed it to.
+
+## Concurrent-upload capacity (ERP-052)
+
+Live-verified (2026-09-18): **5 concurrent PDF uploads from 5 different users completed
+successfully within ~20 seconds**, including while an unrelated pathological large-upload job
+(above) was also still running in the background -- i.e. this result holds even under
+additional load, not just in isolation. VM memory recovered to baseline immediately after.
+
+Higher concurrency (10+) was not tested in this pass, to avoid compounding risk on a
+single-instance `e2-micro` that has previously gone fully unresponsive under load (ERP-047).
+**5 concurrent uploads is the tested, promised number** as of this writing; a follow-up ticket
+should push further under cleaner conditions (without a competing pathological job in flight) if
+a higher number is needed.
+
 ## Cross-project infrastructure options
 
 Hosting/compute/database/GPU choices for making this platform (and future sibling projects)

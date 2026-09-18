@@ -1,17 +1,30 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
-import { getConversationsStore, type RecentConversation } from "../lib/conversationsStore";
-import { getDocumentsStore, type RecentDocument } from "../lib/documentsStore";
 import { parseSseStream } from "../lib/sseStream";
-import type { Citation } from "../lib/types";
+import type {
+  Citation,
+  ConversationHistoryResponse,
+  ConversationListResponse,
+  DocumentListResponse,
+} from "../lib/types";
 
 interface ChatMessage {
   role: "user" | "assistant" | "error";
   content: string;
   citations?: Citation[];
+}
+
+interface SidebarConversation {
+  id: string;
+  title: string;
+}
+
+interface SidebarDocument {
+  id: string;
+  title: string;
 }
 
 function newConversationId(): string {
@@ -26,13 +39,6 @@ function formatCitation(citation: Citation): string {
       : `p. ${citation.page_start}-${citation.page_end}`;
   return `${citation.source_filename}, ${pages}`;
 }
-
-const DOCUMENT_STATUS_DOT: Record<RecentDocument["status"], string> = {
-  pending: "bg-amber-400",
-  processing: "bg-amber-400",
-  done: "bg-emerald-500",
-  failed: "bg-red-500",
-};
 
 function TypingIndicator() {
   return (
@@ -50,16 +56,62 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [recentConversations, setRecentConversations] = useState<RecentConversation[]>(() =>
-    userId ? getConversationsStore(userId).list() : []
-  );
-  const [recentDocuments] = useState<RecentDocument[]>(() =>
-    userId ? getDocumentsStore(userId).list() : []
-  );
+  const [recentConversations, setRecentConversations] = useState<SidebarConversation[]>([]);
+  const [documents, setDocuments] = useState<SidebarDocument[]>([]);
+
+  // Both lists are hydrated from the backend (not localStorage) so chat history and the
+  // document list survive a login from a new browser/device -- the data was always
+  // persisted server-side, there was previously just no "list mine" endpoint to read it back.
+  useEffect(() => {
+    if (!userId) return;
+    void (async () => {
+      const response = await apiFetch("/conversations");
+      if (!response.ok) return;
+      const body = (await response.json()) as ConversationListResponse;
+      setRecentConversations(
+        body.conversations.map((conversation) => ({
+          id: conversation.conversation_id,
+          title: conversation.preview ? conversation.preview.slice(0, 60) : "New conversation",
+        }))
+      );
+    })();
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void (async () => {
+      const response = await apiFetch("/documents");
+      if (!response.ok) return;
+      const body = (await response.json()) as DocumentListResponse;
+      setDocuments(
+        body.documents.map((document) => ({ id: document.document_id, title: document.filename }))
+      );
+    })();
+  }, [userId]);
 
   function startNewConversation(): void {
     setConversationId(newConversationId());
     setMessages([]);
+  }
+
+  /**
+   * Loads a past conversation's full history from the backend. Previously, clicking a
+   * sidebar entry only switched `conversationId` and left the chat pane empty -- the
+   * conversation had no way to render its own history, which is what made a "recent
+   * conversation" look broken (visible in the list, but never actually openable).
+   */
+  async function selectConversation(id: string): Promise<void> {
+    setConversationId(id);
+    setMessages([]);
+    const response = await apiFetch(`/conversations/${id}`);
+    if (!response.ok) return;
+    const body = (await response.json()) as ConversationHistoryResponse;
+    setMessages(
+      body.messages.map((message) => ({
+        role: message.role === "user" ? "user" : "assistant",
+        content: message.content,
+      }))
+    );
   }
 
   async function sendMessage(): Promise<void> {
@@ -110,9 +162,10 @@ export default function ChatPage() {
       }
 
       if (isFirstMessage) {
-        const store = getConversationsStore(userId);
-        store.upsert({ id: conversationId, title: query.slice(0, 60), lastUpdated: Date.now() });
-        setRecentConversations(store.list());
+        setRecentConversations((prev) => [
+          { id: conversationId, title: query.slice(0, 60) },
+          ...prev.filter((conversation) => conversation.id !== conversationId),
+        ]);
       }
     } catch {
       setMessages((prev) => [
@@ -143,7 +196,7 @@ export default function ChatPage() {
                   className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-slate-200 ${
                     conv.id === conversationId ? "bg-slate-200 font-medium" : "text-slate-700"
                   }`}
-                  onClick={() => setConversationId(conv.id)}
+                  onClick={() => void selectConversation(conv.id)}
                 >
                   {conv.title}
                 </button>
@@ -154,17 +207,15 @@ export default function ChatPage() {
         <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
           Your documents
         </p>
-        {recentDocuments.length === 0 ? (
+        {documents.length === 0 ? (
           <p className="px-1 text-sm text-slate-400">
             No documents uploaded yet — visit Documents to add one.
           </p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {recentDocuments.map((doc) => (
+            {documents.map((doc) => (
               <li key={doc.id} className="flex items-center gap-2 px-2 py-1 text-sm text-slate-600">
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOCUMENT_STATUS_DOT[doc.status]}`}
-                />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
                 <span className="truncate">{doc.title}</span>
               </li>
             ))}
@@ -204,7 +255,15 @@ export default function ChatPage() {
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
                       {message.citations.map((citation, citationIndex) => (
                         <li key={citation.chunk_id}>
-                          [{citationIndex + 1}] {formatCitation(citation)}
+                          <details>
+                            <summary className="cursor-pointer">
+                              [{citationIndex + 1}] {formatCitation(citation)}
+                            </summary>
+                            <p className="mt-0.5 pl-3 text-slate-400">
+                              Relevance score: {citation.score.toFixed(3)}
+                              {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
+                            </p>
+                          </details>
                         </li>
                       ))}
                     </ul>

@@ -32,5 +32,8 @@ export function createRecentItemsStore<T extends HasId>(storageKey: string, limi
       const next = [item, ...withoutExisting].slice(0, limit);
       writeAll(next);
     },
+    remove(id: string): void {
+      writeAll(readAll().filter((existing) => existing.id !== id));
+    },
   };
 }
