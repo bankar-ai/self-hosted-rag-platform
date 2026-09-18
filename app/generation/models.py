@@ -35,3 +35,23 @@ class ConversationMessageRecord(Base):
     role: Mapped[str]
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class MessageFeedbackRecord(Base):
+    """A viewer's thumbs up/down rating of one assistant message (ERP-045).
+
+    One row per `message_id` (upserted in place by `set_message_feedback`, not a new row per
+    rating change) -- `rating` is `"up"` or `"down"`. Access is never checked against this
+    table's own `owner_id` directly; every read/write path verifies the message belongs to a
+    conversation owned by the caller first, via a join, so a viewer can only ever rate their
+    own messages.
+    """
+
+    __tablename__ = "message_feedback"
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation_messages.id"), primary_key=True
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    rating: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

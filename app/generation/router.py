@@ -17,14 +17,18 @@ from app.generation.schemas import (
     GenerationQuery,
     GenerationResponse,
     RenameConversationRequest,
+    SetMessageFeedbackRequest,
 )
 from app.generation.service import (
     ConversationAccessDeniedError,
+    ConversationTitleConflictError,
+    clear_feedback,
     generate,
     generate_stream,
     get_conversation_history,
     list_conversations,
     rename_conversation,
+    set_feedback,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,7 +116,34 @@ def rename_conversation_endpoint(
     rename_request: RenameConversationRequest,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> None:
-    """Set a conversation's explicit display title. 404 if unknown or not owned by the caller."""
-    renamed = rename_conversation(conversation_id, current_user.id, rename_request.title)
+    """Set a conversation's explicit display title.
+
+    404 if unknown or not owned by the caller; 409 if the caller already has another
+    conversation with the same title (case-insensitive, ERP-062).
+    """
+    try:
+        renamed = rename_conversation(conversation_id, current_user.id, rename_request.title)
+    except ConversationTitleConflictError as exc:
+        raise HTTPException(status_code=409, detail="A conversation with that name already exists") from exc
     if not renamed:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+
+@conversations_router.put("/messages/{message_id}/feedback", status_code=204)
+def set_message_feedback_endpoint(
+    message_id: uuid.UUID,
+    feedback_request: SetMessageFeedbackRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Rate a message up or down. 404 if unknown or not owned (via its conversation) by the caller."""
+    if not set_feedback(message_id, current_user.id, feedback_request.rating):
+        raise HTTPException(status_code=404, detail="Message not found")
+
+
+@conversations_router.delete("/messages/{message_id}/feedback", status_code=204)
+def clear_message_feedback_endpoint(
+    message_id: uuid.UUID, current_user: CurrentUser = Depends(get_current_user)
+) -> None:
+    """Clear the caller's feedback for a message, if any. 404 if unknown or not owned."""
+    if not clear_feedback(message_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Message not found")

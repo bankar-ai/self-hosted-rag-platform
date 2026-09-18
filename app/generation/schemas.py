@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,20 +59,30 @@ class GenerationResponse(BaseModel):
     """A synthesized answer with the citations backing its inline [n] markers.
 
     `conversation_id` is `None` for a stateless request, otherwise the conversation's ID
-    (echoed back, or newly created on this call).
+    (echoed back, or newly created on this call). `assistant_message_id` is likewise `None`
+    for a stateless request (nothing is persisted); otherwise it's the persisted assistant
+    turn's ID, so the caller can attach feedback (ERP-045) to it without a separate fetch.
     """
 
     answer: str
     citations: list[Citation]
     conversation_id: uuid.UUID | None = None
+    assistant_message_id: uuid.UUID | None = None
 
 
 class Message(BaseModel):
-    """One persisted turn in a conversation's history, with when it was recorded."""
+    """One persisted turn in a conversation's history, with when it was recorded.
 
+    `id` and `feedback` (ERP-045) let the caller show/set a thumbs up/down rating -- `feedback`
+    is `None` both when the message has never been rated and (always) for a `"user"`-role
+    message, which can't be rated at all.
+    """
+
+    id: uuid.UUID
     role: str
     content: str
     created_at: datetime
+    feedback: Literal["up", "down"] | None = None
 
 
 class ConversationHistoryResponse(BaseModel):
@@ -105,3 +116,9 @@ class ConversationListResponse(BaseModel):
     """The caller's conversations, newest first."""
 
     conversations: list[ConversationSummary]
+
+
+class SetMessageFeedbackRequest(BaseModel):
+    """A request to rate one assistant message (ERP-045)."""
+
+    rating: Literal["up", "down"]

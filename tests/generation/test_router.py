@@ -490,6 +490,127 @@ def test_rename_conversation_rejects_empty_title(auth_headers):
     assert response.status_code == 422
 
 
+def test_rename_conversation_409_on_duplicate_title_for_same_owner(monkeypatch, auth_headers):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    conv_a, conv_b = str(uuid.uuid4()), str(uuid.uuid4())
+    client.post(
+        "/generation/query", json={"query": "a", "conversation_id": conv_a}, headers=auth_headers
+    )
+    client.post(
+        "/generation/query", json={"query": "b", "conversation_id": conv_b}, headers=auth_headers
+    )
+    rename_a = client.patch(
+        f"/conversations/{conv_a}", json={"title": "Shared Name"}, headers=auth_headers
+    )
+    assert rename_a.status_code == 204
+
+    response = client.patch(
+        f"/conversations/{conv_b}", json={"title": "shared name"}, headers=auth_headers
+    )
+    assert response.status_code == 409
+
+
+def test_rename_conversation_allows_renaming_to_its_own_current_title(monkeypatch, auth_headers):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    conversation_id = str(uuid.uuid4())
+    client.post(
+        "/generation/query",
+        json={"query": "a question", "conversation_id": conversation_id},
+        headers=auth_headers,
+    )
+    first = client.patch(
+        f"/conversations/{conversation_id}", json={"title": "Same Name"}, headers=auth_headers
+    )
+    assert first.status_code == 204
+
+    second = client.patch(
+        f"/conversations/{conversation_id}", json={"title": "Same Name"}, headers=auth_headers
+    )
+    assert second.status_code == 204
+
+
+def test_rename_conversation_does_not_conflict_across_different_owners(monkeypatch):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    headers_a = register_and_login(client, "generation-rename-dup-owner-a")
+    headers_b = register_and_login(client, "generation-rename-dup-owner-b")
+    conv_a, conv_b = str(uuid.uuid4()), str(uuid.uuid4())
+    client.post(
+        "/generation/query", json={"query": "a", "conversation_id": conv_a}, headers=headers_a
+    )
+    client.post(
+        "/generation/query", json={"query": "b", "conversation_id": conv_b}, headers=headers_b
+    )
+    client.patch(f"/conversations/{conv_a}", json={"title": "Same Name"}, headers=headers_a)
+
+    response = client.patch(
+        f"/conversations/{conv_b}", json={"title": "Same Name"}, headers=headers_b
+    )
+    assert response.status_code == 204
+
+
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
     events = []
     for block in text.strip("\n").split("\n\n"):
@@ -648,7 +769,8 @@ def test_query_stream_with_conversation_id_continues_across_two_calls(monkeypatc
         headers=auth_headers,
     )
     assert first.status_code == 200
-    assert _parse_sse(first.text)[-1] == ("done", {"conversation_id": conversation_id})
+    assert _parse_sse(first.text)[-1][0] == "done"
+    assert _parse_sse(first.text)[-1][1]["conversation_id"] == conversation_id
 
     second = client.post(
         "/generation/query/stream",
@@ -656,7 +778,153 @@ def test_query_stream_with_conversation_id_continues_across_two_calls(monkeypatc
         headers=auth_headers,
     )
     assert second.status_code == 200
-    assert _parse_sse(second.text)[-1] == ("done", {"conversation_id": conversation_id})
+    assert _parse_sse(second.text)[-1][0] == "done"
+    assert _parse_sse(second.text)[-1][1]["conversation_id"] == conversation_id
 
     assert retrieval_queries[0] == "what is the deployment process?"
     assert retrieval_queries[1] == "the second question rewritten"
+
+
+def _post_query_with_conversation(monkeypatch, auth_headers, conversation_id):
+    from app.generation.client import OllamaLLMClient
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+    return client.post(
+        "/generation/query",
+        json={"query": "a question", "conversation_id": conversation_id},
+        headers=auth_headers,
+    )
+
+
+def test_query_returns_assistant_message_id_when_stateful(monkeypatch, auth_headers):
+    import uuid
+
+    response = _post_query_with_conversation(monkeypatch, auth_headers, str(uuid.uuid4()))
+    assert response.status_code == 200
+    assert response.json()["assistant_message_id"] is not None
+
+
+def test_query_omits_assistant_message_id_when_stateless(auth_headers):
+    response = client.post("/generation/query", json={"query": "anything"}, headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["assistant_message_id"] is None
+
+
+def test_set_message_feedback_returns_204_and_shows_in_history(monkeypatch, auth_headers):
+    import uuid
+
+    conversation_id = str(uuid.uuid4())
+    query_response = _post_query_with_conversation(monkeypatch, auth_headers, conversation_id)
+    message_id = query_response.json()["assistant_message_id"]
+
+    response = client.put(
+        f"/conversations/messages/{message_id}/feedback",
+        json={"rating": "up"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 204
+
+    history = client.get(f"/conversations/{conversation_id}", headers=auth_headers)
+    assistant_message = next(m for m in history.json()["messages"] if m["role"] == "assistant")
+    assert assistant_message["feedback"] == "up"
+
+
+def test_set_message_feedback_can_switch_rating(monkeypatch, auth_headers):
+    import uuid
+
+    conversation_id = str(uuid.uuid4())
+    query_response = _post_query_with_conversation(monkeypatch, auth_headers, conversation_id)
+    message_id = query_response.json()["assistant_message_id"]
+
+    client.put(
+        f"/conversations/messages/{message_id}/feedback",
+        json={"rating": "up"},
+        headers=auth_headers,
+    )
+    response = client.put(
+        f"/conversations/messages/{message_id}/feedback",
+        json={"rating": "down"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 204
+
+    history = client.get(f"/conversations/{conversation_id}", headers=auth_headers)
+    assistant_message = next(m for m in history.json()["messages"] if m["role"] == "assistant")
+    assert assistant_message["feedback"] == "down"
+
+
+def test_clear_message_feedback_returns_204_and_clears_it(monkeypatch, auth_headers):
+    import uuid
+
+    conversation_id = str(uuid.uuid4())
+    query_response = _post_query_with_conversation(monkeypatch, auth_headers, conversation_id)
+    message_id = query_response.json()["assistant_message_id"]
+
+    client.put(
+        f"/conversations/messages/{message_id}/feedback",
+        json={"rating": "up"},
+        headers=auth_headers,
+    )
+    response = client.delete(f"/conversations/messages/{message_id}/feedback", headers=auth_headers)
+    assert response.status_code == 204
+
+    history = client.get(f"/conversations/{conversation_id}", headers=auth_headers)
+    assistant_message = next(m for m in history.json()["messages"] if m["role"] == "assistant")
+    assert assistant_message["feedback"] is None
+
+
+def test_set_message_feedback_404_for_unknown_message(auth_headers):
+    import uuid
+
+    response = client.put(
+        f"/conversations/messages/{uuid.uuid4()}/feedback",
+        json={"rating": "up"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 404
+
+
+def test_set_message_feedback_404_for_another_users_message(monkeypatch):
+    import uuid
+
+    headers_a = register_and_login(client, "generation-feedback-owner-a")
+    headers_b = register_and_login(client, "generation-feedback-owner-b")
+    conversation_id = str(uuid.uuid4())
+    query_response = _post_query_with_conversation(monkeypatch, headers_a, conversation_id)
+    message_id = query_response.json()["assistant_message_id"]
+
+    response = client.put(
+        f"/conversations/messages/{message_id}/feedback",
+        json={"rating": "up"},
+        headers=headers_b,
+    )
+    assert response.status_code == 404
+
+
+def test_set_message_feedback_rejects_invalid_rating(monkeypatch, auth_headers):
+    import uuid
+
+    conversation_id = str(uuid.uuid4())
+    query_response = _post_query_with_conversation(monkeypatch, auth_headers, conversation_id)
+    message_id = query_response.json()["assistant_message_id"]
+
+    response = client.put(
+        f"/conversations/messages/{message_id}/feedback",
+        json={"rating": "sideways"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 422

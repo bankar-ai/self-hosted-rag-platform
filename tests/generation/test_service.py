@@ -174,6 +174,27 @@ def test_generate_ignores_a_hallucinated_out_of_range_citation_marker(monkeypatc
     assert [c.chunk_id for c in response.citations] == ["c1"]
 
 
+def test_generate_parses_comma_separated_citations_in_one_bracket(monkeypatch):
+    # ERP-065: a model that writes "[1, 2]" instead of "[1][2]" must still be parsed correctly.
+    chunks = [_chunk("c1"), _chunk("c2"), _chunk("c3")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [1, 2]")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert {c.chunk_id for c in response.citations} == {"c1", "c2"}
+
+
+def test_generate_parses_mixed_single_and_comma_separated_citations(monkeypatch):
+    chunks = [_chunk("c1"), _chunk("c2"), _chunk("c3")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [1][2, 3]")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert {c.chunk_id for c in response.citations} == {"c1", "c2", "c3"}
+
+
 def test_generate_passes_retrieval_params_through(monkeypatch):
     captured = {}
 
@@ -521,7 +542,9 @@ def test_generate_stream_with_conversation_id_persists_after_done(monkeypatch):
         )
     )
 
-    assert events[-1] == ("done", {"conversation_id": str(conversation_id)})
+    assert events[-1][0] == "done"
+    assert events[-1][1]["conversation_id"] == str(conversation_id)
+    assert isinstance(events[-1][1]["assistant_message_id"], str)
     assert fake_llm.generate_calls == []
 
     session_factory = get_session_factory()
@@ -564,7 +587,8 @@ def test_generate_stream_second_turn_rewrites_query_using_history(monkeypatch):
 
     assert captured_retrieval_query["query"] == "what is the second step in the deployment process?"
     assert len(fake_llm.generate_calls) == 1
-    assert events[-1] == ("done", {"conversation_id": str(conversation_id)})
+    assert events[-1][0] == "done"
+    assert events[-1][1]["conversation_id"] == str(conversation_id)
 
 
 def test_generate_stream_exception_mid_stream_yields_error_and_persists_nothing(monkeypatch):

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
+import { renderMarkdownLite } from "../lib/markdownLite";
 import { parseSseStream } from "../lib/sseStream";
 import type {
   Citation,
@@ -12,9 +13,11 @@ import type {
 } from "../lib/types";
 
 interface ChatMessage {
+  id?: string;
   role: "user" | "assistant" | "error";
   content: string;
   citations?: Citation[];
+  feedback?: "up" | "down" | null;
 }
 
 interface SidebarConversation {
@@ -80,6 +83,7 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [recentConversations, setRecentConversations] = useState<SidebarConversation[]>([]);
   const [documents, setDocuments] = useState<SidebarDocument[]>([]);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Both lists are hydrated from the backend (not localStorage) so chat history and the
   // document list survive a login from a new browser/device -- the data was always
@@ -129,6 +133,11 @@ export default function ChatPage() {
     })();
   }, [userId]);
 
+  // ERP-064: keep the latest message in view as the conversation grows or streams in.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
+
   function startNewConversation(): void {
     setConversationId(newConversationId());
     setMessages([]);
@@ -150,8 +159,10 @@ export default function ChatPage() {
     const body = (await response.json()) as ConversationHistoryResponse;
     setMessages(
       body.messages.map((message) => ({
+        id: message.id,
         role: message.role === "user" ? "user" : "assistant",
         content: message.content,
+        feedback: message.feedback,
       }))
     );
   }
@@ -167,6 +178,10 @@ export default function ChatPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
     });
+    if (response.status === 409) {
+      window.alert("You already have a conversation with that name. Please choose another.");
+      return;
+    }
     if (!response.ok) return;
     setRecentConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
   }
@@ -175,6 +190,21 @@ export default function ChatPage() {
     const title = window.prompt("Rename conversation", conv.title);
     if (!title || !title.trim()) return;
     void renameConversation(conv.id, title.trim());
+  }
+
+  async function setMessageFeedback(messageId: string, rating: "up" | "down"): Promise<void> {
+    const isRemovingRating = messages.find((m) => m.id === messageId)?.feedback === rating;
+    const response = await apiFetch(`/conversations/messages/${messageId}/feedback`, {
+      method: isRemovingRating ? "DELETE" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: isRemovingRating ? undefined : JSON.stringify({ rating }),
+    });
+    if (!response.ok) return;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId ? { ...m, feedback: isRemovingRating ? null : rating } : m
+      )
+    );
   }
 
   async function sendMessage(): Promise<void> {
@@ -215,6 +245,15 @@ export default function ChatPage() {
             ...prev.slice(0, -1),
             { role: "assistant", content: assistantText, citations },
           ]);
+        } else if (sseEvent.event === "done") {
+          const assistantMessageId = (sseEvent.data as { assistant_message_id?: string })
+            .assistant_message_id;
+          if (assistantMessageId) {
+            setMessages((prev) => [
+              ...prev.slice(0, -1),
+              { role: "assistant", content: assistantText, citations, id: assistantMessageId },
+            ]);
+          }
         } else if (sseEvent.event === "error") {
           setMessages((prev) => [
             ...prev.slice(0, -1),
@@ -319,7 +358,7 @@ export default function ChatPage() {
                   {isPendingAssistant ? (
                     <TypingIndicator />
                   ) : (
-                    <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+                    <div className="text-sm">{renderMarkdownLite(message.content)}</div>
                   )}
                   {message.citations && message.citations.length > 0 && (
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
@@ -338,9 +377,36 @@ export default function ChatPage() {
                       ))}
                     </ul>
                   )}
+                  {message.role === "assistant" && message.id && !isPendingAssistant && (
+                    <div className="mt-2 flex items-center gap-1 border-t border-slate-200 pt-2">
+                      <button
+                        className={`rounded px-1.5 py-0.5 text-xs ${
+                          message.feedback === "up"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "text-slate-400 hover:bg-slate-200"
+                        }`}
+                        title="Good answer"
+                        onClick={() => void setMessageFeedback(message.id!, "up")}
+                      >
+                        👍
+                      </button>
+                      <button
+                        className={`rounded px-1.5 py-0.5 text-xs ${
+                          message.feedback === "down"
+                            ? "bg-red-100 text-red-700"
+                            : "text-slate-400 hover:bg-slate-200"
+                        }`}
+                        title="Bad answer"
+                        onClick={() => void setMessageFeedback(message.id!, "down")}
+                      >
+                        👎
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
+            <div ref={bottomRef} />
           </div>
         </div>
         <div className="border-t border-slate-200 p-4">

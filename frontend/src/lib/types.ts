@@ -78,9 +78,11 @@ export interface ConversationListResponse {
 }
 
 export interface ConversationMessage {
+  id: string;
   role: string;
   content: string;
   created_at: string;
+  feedback: "up" | "down" | null;
 }
 
 export interface ConversationHistoryResponse {

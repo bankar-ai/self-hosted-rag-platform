@@ -94,6 +94,33 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **A five-ticket batch (ERP-045, ERP-062, ERP-063, ERP-064, ERP-065) was completed 2026-09-18**
+  from a fresh round of live UI feedback, deliberately scoped to same-session-sized work —
+  **ERP-044 (document-scoped retrieval) and ERP-050 (visual redesign) were explicitly left out**
+  as bigger, separately-scoped efforts. Summary:
+  - **ERP-065** [Bug] — citation parsing silently dropped everything when the model wrote
+    `[1, 2, 5]` instead of `[1][2][5]`; `_CITATION_MARKER_RE` now handles both forms.
+  - **ERP-062** [Lapse] — renaming a conversation to a name another of the caller's own
+    conversations already has (case-insensitive) is now rejected with `409`; renaming to a
+    conversation's own current title is still allowed.
+  - **ERP-063** [Bug] — chat rendered literal `**asterisks**` instead of markdown; new
+    `frontend/src/lib/markdownLite.tsx` (bold + bullet/numbered lists, no new dependency) now
+    renders it properly. `SYSTEM_PROMPT` also gained explicit structured-formatting and
+    anti-hallucination guidance.
+  - **ERP-064** [Lapse] — the chat pane never auto-scrolled; now scrolls to the latest message
+    as it streams in.
+  - **ERP-045** [Improvement] — per-message thumbs up/down feedback, finally scoped and built.
+    Required exposing message IDs to the frontend for the first time (`GenerationResponse`
+    gained `assistant_message_id`, the streaming `done` event gained the same, and
+    `Message`/`ConversationHistoryResponse` gained `id`/`feedback`) — a real prerequisite gap,
+    not just the feedback table itself. New `message_feedback` table (migration
+    `2da7a6112cf0`), `PUT`/`DELETE /conversations/messages/{message_id}/feedback`.
+  - Two migrations this batch: `ea444b637948` (conversations.title, from the prior session) was
+    already applied; `2da7a6112cf0` (message_feedback) is new.
+  - Verified: backend 461 → 485 tests passing, ruff/mypy clean; frontend 24 → 29 tests passing,
+    `tsc`/`oxlint` clean. Live-verified against the real local stack (real Postgres/Redis/Ollama):
+    multi-citation parsing, feedback set/switch/clear round-tripping through history reload,
+    and duplicate-name 409 rejection all confirmed with real API calls before deploying.
 - **The full ERP-051-059 batch was deployed and live-verified 2026-09-18** (see the entry
   below for what it contained). Root cause of a post-deploy hiccup: the backend deployed
   cleanly via `git pull` + `systemctl restart` on the VM, but **the frontend was not

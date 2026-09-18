@@ -74,8 +74,15 @@ def test_message_round_trip():
     from app.generation.schemas import Message
 
     now = datetime(2026, 9, 1, 12, 0, 0)
-    message = Message(role="user", content="hello", created_at=now)
-    assert message.model_dump() == {"role": "user", "content": "hello", "created_at": now}
+    message_id = uuid.uuid4()
+    message = Message(id=message_id, role="user", content="hello", created_at=now)
+    assert message.model_dump() == {
+        "id": message_id,
+        "role": "user",
+        "content": "hello",
+        "created_at": now,
+        "feedback": None,
+    }
 
 
 def test_conversation_history_response_round_trip():
@@ -84,7 +91,9 @@ def test_conversation_history_response_round_trip():
     from app.generation.schemas import ConversationHistoryResponse, Message
 
     conversation_id = uuid.uuid4()
-    message = Message(role="user", content="hello", created_at=datetime(2026, 9, 1, 12, 0, 0))
+    message = Message(
+        id=uuid.uuid4(), role="user", content="hello", created_at=datetime(2026, 9, 1, 12, 0, 0)
+    )
     response = ConversationHistoryResponse(conversation_id=conversation_id, messages=[message])
 
     assert response.conversation_id == conversation_id

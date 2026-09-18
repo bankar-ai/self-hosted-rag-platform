@@ -3,14 +3,18 @@ import uuid
 from app.core.db import get_session_factory
 from app.generation.repository import (
     append_message,
+    clear_message_feedback,
     get_all_messages,
     get_conversation,
     get_conversation_owner_id,
+    get_feedback_for_messages,
     get_first_user_messages,
     get_or_create_conversation,
     get_recent_messages,
     list_conversations_for_owner,
     rename_conversation,
+    set_message_feedback,
+    title_exists_for_owner,
 )
 
 _TEST_OWNER_ID = uuid.uuid4()
@@ -292,3 +296,164 @@ def test_rename_conversation_wrong_owner_returns_false_and_does_not_rename():
 
         conversation = session.get(ConversationRecord, conversation_id)
         assert conversation.title is None
+
+
+def test_title_exists_for_owner_true_for_case_insensitive_match():
+    owner_id = uuid.uuid4()
+    conv_a, conv_b = uuid.uuid4(), uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.flush()
+        get_or_create_conversation(session, conv_a, owner_id)
+        get_or_create_conversation(session, conv_b, owner_id)
+        rename_conversation(session, conv_a, owner_id, "My Chat")
+        session.commit()
+
+    with session_factory() as session:
+        assert title_exists_for_owner(session, owner_id, "my chat", exclude_conversation_id=conv_b) is True
+
+
+def test_title_exists_for_owner_excludes_the_conversation_itself():
+    owner_id = uuid.uuid4()
+    conv_a = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.flush()
+        get_or_create_conversation(session, conv_a, owner_id)
+        rename_conversation(session, conv_a, owner_id, "My Chat")
+        session.commit()
+
+    with session_factory() as session:
+        assert title_exists_for_owner(session, owner_id, "My Chat", exclude_conversation_id=conv_a) is False
+
+
+def test_title_exists_for_owner_scoped_per_owner():
+    owner_a, owner_b = uuid.uuid4(), uuid.uuid4()
+    conv_a = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_a, email=f"{owner_a}@test", hashed_password="x"))
+        session.add(UserRecord(id=owner_b, email=f"{owner_b}@test", hashed_password="x"))
+        session.flush()
+        get_or_create_conversation(session, conv_a, owner_a)
+        rename_conversation(session, conv_a, owner_a, "My Chat")
+        session.commit()
+
+    with session_factory() as session:
+        exists = title_exists_for_owner(
+            session, owner_b, "My Chat", exclude_conversation_id=uuid.uuid4()
+        )
+        assert exists is False
+
+
+def _make_message(owner_id):
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        if session.get(UserRecord, owner_id) is None:
+            session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+            session.flush()
+        get_or_create_conversation(session, conversation_id, owner_id)
+        message = append_message(session, conversation_id, "assistant", "an answer")
+        session.commit()
+        return message.id
+
+
+def test_set_message_feedback_creates_a_rating():
+    owner_id = uuid.uuid4()
+    message_id = _make_message(owner_id)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        assert set_message_feedback(session, message_id, owner_id, "up") is True
+        session.commit()
+
+    with session_factory() as session:
+        assert get_feedback_for_messages(session, [message_id]) == {message_id: "up"}
+
+
+def test_set_message_feedback_switches_an_existing_rating():
+    owner_id = uuid.uuid4()
+    message_id = _make_message(owner_id)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        set_message_feedback(session, message_id, owner_id, "up")
+        session.commit()
+    with session_factory() as session:
+        set_message_feedback(session, message_id, owner_id, "down")
+        session.commit()
+
+    with session_factory() as session:
+        assert get_feedback_for_messages(session, [message_id]) == {message_id: "down"}
+
+
+def test_set_message_feedback_returns_false_for_unknown_message():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert set_message_feedback(session, uuid.uuid4(), uuid.uuid4(), "up") is False
+
+
+def test_set_message_feedback_returns_false_for_wrong_owner():
+    owner_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    message_id = _make_message(owner_id)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        assert set_message_feedback(session, message_id, other_owner_id, "up") is False
+
+    with session_factory() as session:
+        assert get_feedback_for_messages(session, [message_id]) == {}
+
+
+def test_clear_message_feedback_removes_an_existing_rating():
+    owner_id = uuid.uuid4()
+    message_id = _make_message(owner_id)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        set_message_feedback(session, message_id, owner_id, "up")
+        session.commit()
+
+    with session_factory() as session:
+        assert clear_message_feedback(session, message_id, owner_id) is True
+        session.commit()
+
+    with session_factory() as session:
+        assert get_feedback_for_messages(session, [message_id]) == {}
+
+
+def test_clear_message_feedback_is_a_noop_when_nothing_to_clear():
+    owner_id = uuid.uuid4()
+    message_id = _make_message(owner_id)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        assert clear_message_feedback(session, message_id, owner_id) is True
+
+
+def test_clear_message_feedback_returns_false_for_wrong_owner():
+    owner_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    message_id = _make_message(owner_id)
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        assert clear_message_feedback(session, message_id, other_owner_id) is False
+
+
+def test_get_feedback_for_messages_empty_input_returns_empty_dict():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert get_feedback_for_messages(session, []) == {}
