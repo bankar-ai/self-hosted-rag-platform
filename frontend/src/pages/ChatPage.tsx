@@ -31,6 +31,26 @@ function newConversationId(): string {
   return crypto.randomUUID();
 }
 
+const ACTIVE_CONVERSATION_KEY_PREFIX = "rag-active-conversation:";
+
+/** Reads/writes are best-effort -- a private-browsing/storage-blocked browser just falls back
+ * to always starting a new conversation, same as before this feature existed (ERP-060). */
+function getStoredConversationId(userId: string): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_CONVERSATION_KEY_PREFIX + userId);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredConversationId(userId: string, id: string): void {
+  try {
+    localStorage.setItem(ACTIVE_CONVERSATION_KEY_PREFIX + userId, id);
+  } catch {
+    // best-effort only
+  }
+}
+
 /** "document.pdf, p. 3" or "document.pdf, p. 3-4" when the citation spans multiple pages. */
 function formatCitation(citation: Citation): string {
   const pages =
@@ -52,7 +72,9 @@ function TypingIndicator() {
 
 export default function ChatPage() {
   const { userId } = useAuth();
-  const [conversationId, setConversationId] = useState<string>(() => newConversationId());
+  const [conversationId, setConversationId] = useState<string>(
+    () => (userId && getStoredConversationId(userId)) || newConversationId()
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -71,11 +93,29 @@ export default function ChatPage() {
       setRecentConversations(
         body.conversations.map((conversation) => ({
           id: conversation.conversation_id,
-          title: conversation.preview ? conversation.preview.slice(0, 60) : "New conversation",
+          title:
+            conversation.title ??
+            (conversation.preview ? conversation.preview.slice(0, 60) : "New conversation"),
         }))
       );
     })();
   }, [userId]);
+
+  // Restores the conversation that was open before a refresh (ERP-060) -- without this, every
+  // page load silently started a brand new blank chat regardless of what was open before,
+  // which read as "refreshing cleared my history" even though nothing was actually deleted.
+  useEffect(() => {
+    if (!userId) return;
+    const stored = getStoredConversationId(userId);
+    if (stored) void loadConversationHistory(stored);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  // Persists the active conversation on every change so a refresh can restore it above.
+  useEffect(() => {
+    if (!userId) return;
+    setStoredConversationId(userId, conversationId);
+  }, [userId, conversationId]);
 
   useEffect(() => {
     if (!userId) return;
@@ -95,13 +135,15 @@ export default function ChatPage() {
   }
 
   /**
-   * Loads a past conversation's full history from the backend. Previously, clicking a
-   * sidebar entry only switched `conversationId` and left the chat pane empty -- the
-   * conversation had no way to render its own history, which is what made a "recent
-   * conversation" look broken (visible in the list, but never actually openable).
+   * Loads a conversation's full history from the backend. Previously, clicking a sidebar
+   * entry only switched `conversationId` and left the chat pane empty -- the conversation
+   * had no way to render its own history, which is what made a "recent conversation" look
+   * broken (visible in the list, but never actually openable). Also reused on mount to
+   * restore whatever conversation was active before a refresh (ERP-060) -- a 404 (e.g. a
+   * "new chat" that was never actually sent) is treated as an empty conversation, not an
+   * error, since restoring it should feel identical to starting fresh.
    */
-  async function selectConversation(id: string): Promise<void> {
-    setConversationId(id);
+  async function loadConversationHistory(id: string): Promise<void> {
     setMessages([]);
     const response = await apiFetch(`/conversations/${id}`);
     if (!response.ok) return;
@@ -112,6 +154,27 @@ export default function ChatPage() {
         content: message.content,
       }))
     );
+  }
+
+  async function selectConversation(id: string): Promise<void> {
+    setConversationId(id);
+    await loadConversationHistory(id);
+  }
+
+  async function renameConversation(id: string, title: string): Promise<void> {
+    const response = await apiFetch(`/conversations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (!response.ok) return;
+    setRecentConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
+  }
+
+  function handleRename(conv: SidebarConversation): void {
+    const title = window.prompt("Rename conversation", conv.title);
+    if (!title || !title.trim()) return;
+    void renameConversation(conv.id, title.trim());
   }
 
   async function sendMessage(): Promise<void> {
@@ -191,14 +254,21 @@ export default function ChatPage() {
         ) : (
           <ul className="mb-6 flex flex-col gap-1">
             {recentConversations.map((conv) => (
-              <li key={conv.id}>
+              <li key={conv.id} className="flex items-center gap-1">
                 <button
-                  className={`w-full truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-slate-200 ${
+                  className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-slate-200 ${
                     conv.id === conversationId ? "bg-slate-200 font-medium" : "text-slate-700"
                   }`}
                   onClick={() => void selectConversation(conv.id)}
                 >
                   {conv.title}
+                </button>
+                <button
+                  className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                  title="Rename conversation"
+                  onClick={() => handleRename(conv)}
+                >
+                  ✎
                 </button>
               </li>
             ))}

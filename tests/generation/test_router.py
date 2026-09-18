@@ -394,6 +394,102 @@ def test_list_conversations_does_not_include_another_users_conversations(monkeyp
     assert response.json() == {"conversations": []}
 
 
+def test_rename_conversation_returns_204_and_persists(monkeypatch, auth_headers):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    conversation_id = str(uuid.uuid4())
+    client.post(
+        "/generation/query",
+        json={"query": "first question", "conversation_id": conversation_id},
+        headers=auth_headers,
+    )
+
+    response = client.patch(
+        f"/conversations/{conversation_id}", json={"title": "My renamed chat"}, headers=auth_headers
+    )
+    assert response.status_code == 204
+
+    listed = client.get("/conversations", headers=auth_headers)
+    renamed = next(c for c in listed.json()["conversations"] if c["conversation_id"] == conversation_id)
+    assert renamed["title"] == "My renamed chat"
+
+
+def test_rename_conversation_404_for_unknown_id(auth_headers):
+    import uuid
+
+    response = client.patch(
+        f"/conversations/{uuid.uuid4()}", json={"title": "x"}, headers=auth_headers
+    )
+    assert response.status_code == 404
+
+
+def test_rename_conversation_404_for_another_users_conversation(monkeypatch):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    headers_a = register_and_login(client, "generation-rename-owner-a")
+    headers_b = register_and_login(client, "generation-rename-owner-b")
+    conversation_id = str(uuid.uuid4())
+    client.post(
+        "/generation/query",
+        json={"query": "a's question", "conversation_id": conversation_id},
+        headers=headers_a,
+    )
+
+    response = client.patch(
+        f"/conversations/{conversation_id}", json={"title": "hijacked"}, headers=headers_b
+    )
+    assert response.status_code == 404
+
+
+def test_rename_conversation_rejects_empty_title(auth_headers):
+    import uuid
+
+    response = client.patch(
+        f"/conversations/{uuid.uuid4()}", json={"title": ""}, headers=auth_headers
+    )
+    assert response.status_code == 422
+
+
 def _parse_sse(text: str) -> list[tuple[str, dict]]:
     events = []
     for block in text.strip("\n").split("\n\n"):

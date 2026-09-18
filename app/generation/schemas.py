@@ -82,11 +82,23 @@ class ConversationHistoryResponse(BaseModel):
 
 
 class ConversationSummary(BaseModel):
-    """One of the caller's conversations, with a preview of its first message."""
+    """One of the caller's conversations, with a preview of its first message.
+
+    `title` is the explicit user-set name (ERP-061), `None` if never renamed -- callers should
+    fall back to `preview` in that case. `preview` itself is always the first-message text,
+    regardless of whether `title` is set.
+    """
 
     conversation_id: uuid.UUID
     created_at: datetime
     preview: str | None = None
+    title: str | None = None
+
+
+class RenameConversationRequest(BaseModel):
+    """A request to set a conversation's explicit display title."""
+
+    title: str = Field(min_length=1, max_length=200)
 
 
 class ConversationListResponse(BaseModel):

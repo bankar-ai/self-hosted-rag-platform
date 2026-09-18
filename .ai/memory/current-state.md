@@ -94,6 +94,39 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **The full ERP-051-059 batch was deployed and live-verified 2026-09-18** (see the entry
+  below for what it contained). Root cause of a post-deploy hiccup: the backend deployed
+  cleanly via `git pull` + `systemctl restart` on the VM, but **the frontend was not
+  auto-deploying from GitHub at all** — Vercel had no Git integration connected, so it was
+  still serving a build from 2026-09-17, predating this repo's last two sessions entirely.
+  Fixed by running `vercel --prod` directly from `frontend/` to ship the current build; `vercel
+  git connect` failed (needs interactive OAuth in the Vercel dashboard) so **auto-deploy on push
+  is still not connected** — flagged for the user to do once via Vercel's Settings → Git. Also
+  live-verified end-to-end post-deploy: `GET /documents`/`GET /conversations` both live, and a
+  real generation query returned exactly one citation with `score`/`reranked` populated. Cleaned
+  up 8 throwaway test accounts (7 from this session's live testing, 1 older leftover) via the
+  live admin API.
+- **Three more tickets (ERP-046, ERP-060, ERP-061) closed the same day**, from a live bug
+  report against the freshly-redeployed frontend:
+  - **ERP-046** [Lapse] — the long-open "no relevance guardrail" gap. Two-layer fix: a
+    deterministic greeting-phrase fast-path (`app/generation/service.py`'s `_GREETING_RE`) skips
+    retrieval/LLM entirely for "hi"/"hello there"/etc.; a distance-based relevance gate on the
+    FAISS leg (`RetrievalSettings.max_relevant_distance`, new) filters out-of-scope queries
+    before RRF fusion. Threshold (0.95) live-calibrated against real `nomic-embed-text`
+    embeddings (measured on-topic distances 0.74-0.85 vs. off-topic 1.02-1.15), then re-verified
+    against the ERP-029 evaluation harness with zero regression (exact match to the existing
+    baseline).
+  - **ERP-060** [Lapse] — refreshing the browser always started a blank "New chat" even though
+    the sidebar's conversation list loaded fine; confirmed cause was `ChatPage.tsx` never
+    persisting which conversation was active. Fixed via a per-user `localStorage` key, restored
+    and its history reloaded automatically on mount.
+  - **ERP-061** [Improvement] — conversations can now be renamed (new `title` column via
+    migration, `PATCH /conversations/{id}`, a small inline rename affordance in the sidebar);
+    an unrenamed conversation's auto-derived preview title is unchanged.
+  - Verified: backend 459 → 461 tests passing, ruff/mypy clean; frontend `tsc`/`oxlint` clean,
+    24 vitest tests passing. Live-verified all three against the real local stack (greeting,
+    off-topic, on-topic, rename) before being committed — not yet deployed to the live VM/Vercel
+    as of this writing (see session log for the pending deploy step).
 - **A nine-ticket batch (ERP-051 through ERP-059) covering infra promises, upload UX, citation
   quality, and prompt-injection guardrails was completed 2026-09-18**, all code-level work
   committed to `develop` — see `.ai/sessions/2026-09-18-erp051-059-batch.md` for full detail.

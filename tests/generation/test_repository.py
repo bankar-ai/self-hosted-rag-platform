@@ -10,6 +10,7 @@ from app.generation.repository import (
     get_or_create_conversation,
     get_recent_messages,
     list_conversations_for_owner,
+    rename_conversation,
 )
 
 _TEST_OWNER_ID = uuid.uuid4()
@@ -242,3 +243,52 @@ def test_get_first_user_messages_conversation_with_no_messages_is_absent():
 
     with session_factory() as session:
         assert get_first_user_messages(session, [conversation_id]) == {}
+
+
+def test_rename_conversation_sets_title():
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        renamed = rename_conversation(session, conversation_id, _TEST_OWNER_ID, "My renamed chat")
+        session.commit()
+        assert renamed is True
+
+    with session_factory() as session:
+        from app.generation.models import ConversationRecord
+
+        conversation = session.get(ConversationRecord, conversation_id)
+        assert conversation.title == "My renamed chat"
+
+
+def test_rename_conversation_unknown_id_returns_false():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert rename_conversation(session, uuid.uuid4(), _TEST_OWNER_ID, "title") is False
+
+
+def test_rename_conversation_wrong_owner_returns_false_and_does_not_rename():
+    conversation_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=other_owner_id, email=f"{other_owner_id}@test", hashed_password="x"))
+        session.flush()
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        assert rename_conversation(session, conversation_id, other_owner_id, "hijacked") is False
+
+    with session_factory() as session:
+        from app.generation.models import ConversationRecord
+
+        conversation = session.get(ConversationRecord, conversation_id)
+        assert conversation.title is None

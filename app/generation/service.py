@@ -19,6 +19,9 @@ from app.generation.repository import (
     get_recent_messages,
     list_conversations_for_owner,
 )
+from app.generation.repository import (
+    rename_conversation as repository_rename_conversation,
+)
 from app.generation.rewrite import rewrite_query
 from app.generation.schemas import (
     Citation,
@@ -35,6 +38,19 @@ from app.retrieval.service import search as retrieval_search
 logger = logging.getLogger(__name__)
 
 NO_CONTEXT_ANSWER = "I don't have enough information in the ingested documents to answer this question."
+GREETING_ANSWER = "Hello! Ask me a question about your uploaded documents and I'll do my best to help."
+
+# ERP-046: a plain greeting/pleasantry with no other content should never reach retrieval or
+# the LLM -- top_k retrieval always returns *something*, regardless of relevance, and a model
+# asked to answer "hi" from irrelevant context has nothing good to do with it (observed live:
+# one model paraphrased its own system prompt back as if it were an answer). Anchored on both
+# ends (^...$) so it only matches a message that IS a greeting, not one that merely starts with
+# one ("hi, what does section 3 say about pricing?" must not match).
+_GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|hiya|yo|howdy|greetings|good\s*(morning|afternoon|evening)"
+    r"|how\s*are\s*you|what'?s\s*up)(\s*(there|folks|team|guys|all))?[\s!.,?]*$",
+    re.IGNORECASE,
+)
 
 
 class ConversationAccessDeniedError(Exception):
@@ -117,6 +133,9 @@ def generate(
     settings = settings or get_generation_settings()
 
     if conversation_id is None:
+        if _GREETING_RE.match(query):
+            return GenerationResponse(answer=GREETING_ANSWER, citations=[], conversation_id=None)
+
         chunks = retrieval_search(query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections)
         if not chunks:
             return GenerationResponse(answer=NO_CONTEXT_ANSWER, citations=[], conversation_id=None)
@@ -138,25 +157,29 @@ def generate(
         )
         history = [ConversationTurn(role=r.role, content=r.content) for r in history_records]
 
-    if history:
-        llm_client = llm_client or OllamaLLMClient(settings)
-        rewritten_query = rewrite_query(query, history, llm_client)
-    else:
-        rewritten_query = query
-
-    chunks = retrieval_search(
-        rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
-    )
-    if not chunks:
-        answer = NO_CONTEXT_ANSWER
+    if _GREETING_RE.match(query):
+        answer = GREETING_ANSWER
         citations = []
     else:
-        llm_client = llm_client or OllamaLLMClient(settings)
-        user_prompt, included_chunks = build_prompt(
-            query, chunks, settings.max_context_chars, history=history
+        if history:
+            llm_client = llm_client or OllamaLLMClient(settings)
+            rewritten_query = rewrite_query(query, history, llm_client)
+        else:
+            rewritten_query = query
+
+        chunks = retrieval_search(
+            rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
         )
-        answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
-        citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
+        if not chunks:
+            answer = NO_CONTEXT_ANSWER
+            citations = []
+        else:
+            llm_client = llm_client or OllamaLLMClient(settings)
+            user_prompt, included_chunks = build_prompt(
+                query, chunks, settings.max_context_chars, history=history
+            )
+            answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
+            citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
 
     with session_factory() as write_session:
         get_or_create_conversation(write_session, conversation_id, owner_id)
@@ -198,6 +221,12 @@ def generate_stream(
     try:
         settings = settings or get_generation_settings()
         if conversation_id is None:
+            if _GREETING_RE.match(query):
+                yield "token", {"text": GREETING_ANSWER}
+                yield "citations", {"citations": []}
+                yield "done", {"conversation_id": None}
+                return
+
             chunks = retrieval_search(
                 query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
             )
@@ -229,31 +258,36 @@ def generate_stream(
             )
             history = [ConversationTurn(role=r.role, content=r.content) for r in history_records]
 
-        if history:
-            llm_client = llm_client or OllamaLLMClient(settings)
-            rewritten_query = rewrite_query(query, history, llm_client)
-        else:
-            rewritten_query = query
-
-        chunks = retrieval_search(
-            rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
-        )
-        if not chunks:
-            yield "token", {"text": NO_CONTEXT_ANSWER}
+        if _GREETING_RE.match(query):
+            yield "token", {"text": GREETING_ANSWER}
             yield "citations", {"citations": []}
-            answer = NO_CONTEXT_ANSWER
+            answer = GREETING_ANSWER
         else:
-            llm_client = llm_client or OllamaLLMClient(settings)
-            user_prompt, included_chunks = build_prompt(
-                query, chunks, settings.max_context_chars, history=history
+            if history:
+                llm_client = llm_client or OllamaLLMClient(settings)
+                rewritten_query = rewrite_query(query, history, llm_client)
+            else:
+                rewritten_query = query
+
+            chunks = retrieval_search(
+                rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
             )
-            answer_parts = []
-            for piece in llm_client.generate_stream(SYSTEM_PROMPT, user_prompt):
-                answer_parts.append(piece)
-                yield "token", {"text": piece}
-            answer = "".join(answer_parts)
-            citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
-            yield "citations", {"citations": [c.model_dump() for c in citations]}
+            if not chunks:
+                yield "token", {"text": NO_CONTEXT_ANSWER}
+                yield "citations", {"citations": []}
+                answer = NO_CONTEXT_ANSWER
+            else:
+                llm_client = llm_client or OllamaLLMClient(settings)
+                user_prompt, included_chunks = build_prompt(
+                    query, chunks, settings.max_context_chars, history=history
+                )
+                answer_parts = []
+                for piece in llm_client.generate_stream(SYSTEM_PROMPT, user_prompt):
+                    answer_parts.append(piece)
+                    yield "token", {"text": piece}
+                answer = "".join(answer_parts)
+                citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
+                yield "citations", {"citations": [c.model_dump() for c in citations]}
 
         with session_factory() as write_session:
             get_or_create_conversation(write_session, conversation_id, owner_id)
@@ -304,8 +338,21 @@ def list_conversations(owner_id: uuid.UUID) -> ConversationListResponse:
     return ConversationListResponse(
         conversations=[
             ConversationSummary(
-                conversation_id=c.id, created_at=c.created_at, preview=previews.get(c.id)
+                conversation_id=c.id,
+                created_at=c.created_at,
+                preview=previews.get(c.id),
+                title=c.title,
             )
             for c in conversations
         ]
     )
+
+
+def rename_conversation(conversation_id: uuid.UUID, owner_id: uuid.UUID, title: str) -> bool:
+    """Set `conversation_id`'s explicit title. Returns `False` if unknown or not owned by `owner_id`."""
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        renamed = repository_rename_conversation(session, conversation_id, owner_id, title)
+        if renamed:
+            session.commit()
+    return renamed

@@ -1,9 +1,12 @@
 import uuid
 
+import pytest
+
 from app.core.db import get_session_factory
 from app.generation.config import GenerationSettings
 from app.generation.repository import append_message, get_or_create_conversation, get_recent_messages
 from app.generation.service import (
+    GREETING_ANSWER,
     NO_CONTEXT_ANSWER,
     ConversationAccessDeniedError,
     generate,
@@ -77,6 +80,41 @@ def test_generate_short_circuits_on_empty_retrieval(monkeypatch):
     assert response.answer == NO_CONTEXT_ANSWER
     assert response.citations == []
     assert fake_llm.calls == []
+
+
+@pytest.mark.parametrize(
+    "greeting", ["hi", "Hello", "hey!", "hello.", "  hi  ", "howdy?", "hello there", "hi team!"]
+)
+def test_generate_short_circuits_on_plain_greeting_without_retrieval_or_llm_call(
+    monkeypatch, greeting
+):
+    def _fail_if_called(*a, **k):
+        raise AssertionError("retrieval must not run for a plain greeting")
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", _fail_if_called)
+    fake_llm = _FakeLLMClient("should not be used")
+
+    response = generate(greeting, top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert response.answer == GREETING_ANSWER
+    assert response.citations == []
+    assert fake_llm.calls == []
+
+
+def test_generate_does_not_treat_a_greeting_prefixed_real_question_as_a_greeting(monkeypatch):
+    chunks = [_chunk("c1")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [1]")
+
+    response = generate(
+        "hi, what does the document say about pricing?",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        llm_client=fake_llm,
+    )
+
+    assert response.answer == "the answer [1]"
+    assert len(fake_llm.calls) == 1
 
 
 def test_generate_builds_prompt_and_returns_citations(monkeypatch):
@@ -414,6 +452,53 @@ def test_generate_stream_stateless_short_circuits_on_empty_retrieval(monkeypatch
         ("done", {"conversation_id": None}),
     ]
     assert fake_llm.stream_calls == []
+
+
+def test_generate_stream_stateless_short_circuits_on_plain_greeting(monkeypatch):
+    def _fail_if_called(*a, **k):
+        raise AssertionError("retrieval must not run for a plain greeting")
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", _fail_if_called)
+    fake_llm = _FakeStreamingLLMClient(["should not be used"])
+
+    events = list(generate_stream("hello", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm))
+
+    assert events == [
+        ("token", {"text": GREETING_ANSWER}),
+        ("citations", {"citations": []}),
+        ("done", {"conversation_id": None}),
+    ]
+    assert fake_llm.stream_calls == []
+
+
+def test_generate_with_conversation_id_short_circuits_on_greeting_and_still_persists(monkeypatch):
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        session.commit()
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("retrieval must not run for a plain greeting")
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", _fail_if_called)
+    fake_llm = _FakeLLMClient("should not be used")
+
+    response = generate(
+        "hi",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        conversation_id=conversation_id,
+        llm_client=fake_llm,
+    )
+
+    assert response.answer == GREETING_ANSWER
+    assert response.citations == []
+    assert fake_llm.calls == []
+
+    with session_factory() as session:
+        messages = get_recent_messages(session, conversation_id, limit=10)
+    assert [m.content for m in messages] == ["hi", GREETING_ANSWER]
 
 
 def test_generate_stream_with_conversation_id_persists_after_done(monkeypatch):
