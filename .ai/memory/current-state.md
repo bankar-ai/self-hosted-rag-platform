@@ -94,6 +94,24 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **ERP-044 (Document-Scoped Retrieval) is Done, deployed, and live-verified (2026-09-18)**:
+  a caller can now scope a retrieval/generation query to a chosen subset of their own documents
+  via a new `document_ids` parameter, filtered before RRF fusion on both retrieval legs — true
+  search-time filtering on FAISS via `IDSelectorBatch`/`SearchParameters(sel=...)` (verified
+  experimentally against real `faiss` before writing production code, not a weaker post-hoc
+  filter), and a SQL `IN` clause on BM25. `document_ids=None` (omitted) is unchanged
+  "search everything owned" behavior; `document_ids=[]` (explicit) short-circuits to no results.
+  Frontend: the Chat sidebar's document list gained a checkbox per document (checked by default,
+  opt-out model), wired into every query. Backend 485 → 502 tests passing, ruff/mypy clean;
+  frontend `tsc`/`vite build`/`oxlint` clean, 29 vitest tests passing (no new tests for
+  `ChatPage.tsx`, which had no prior coverage — verified live instead). **Live-verified against
+  the production deployment**: two documents with mutually-exclusive content uploaded; scoped
+  retrieval to one, the other, both (unscoped), and explicitly-empty all matched the design
+  exactly; a full streamed generation query scoped to one document produced a correct, grounded,
+  cited answer. Test user and its data deleted afterward via the admin API. Deployed via `git
+  pull` + `systemctl restart` on the VM (no migration) and `vercel --prod`. Merged to `develop`
+  via PR #48. **ERP-050 (visual/UX redesign) remains open**, deliberately deferred as its own,
+  separately-scoped design effort — see `.ai/tickets/ERP-050.md`.
 - **ERP-066 (2026-09-18)**: `DELETE /admin/users/{id}` 500'd for any user with a rated message
   -- a real regression from ERP-045 (below), caught during this session's own post-deploy
   cleanup, not a user report. `delete_user_and_owned_data` didn't know about the new
