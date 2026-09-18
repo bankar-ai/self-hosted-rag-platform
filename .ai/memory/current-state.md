@@ -94,6 +94,34 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **ERP-048 and ERP-049 are Done (2026-09-18)**, closing out the two functional gaps found
+  during ERP-043's final live UI walkthrough (the walkthrough itself is now also Done — see
+  below). **ERP-048** [Lapse]: conversation history didn't survive a fresh login — full history
+  was always persisted server-side (ERP-018/019), but there was no `GET /conversations`
+  list-mine endpoint, and separately, clicking a sidebar conversation never actually fetched its
+  history at all. Both fixed: new `GET /conversations` (`app/generation/repository.py`'s
+  `list_conversations_for_owner`/`get_first_user_messages`, `service.list_conversations`,
+  `router.py`'s endpoint), and the frontend's `ChatPage.tsx` now hydrates the sidebar from the
+  server (not `localStorage`, which was deleted along with its now-unused `conversationsStore.ts`
+  module) and loads a conversation's full history via the existing `GET /conversations/{id}`
+  when clicked. **ERP-049** [Improvement]: no way to delete a document, successfully ingested or
+  failed. New `GET /documents`/`DELETE /documents/{id}` (`app/ingestion/repository.py`'s
+  `list_documents_for_owner`/`delete_document`, new `app/embedding/service.py`'s
+  `delete_document_and_vectors` orchestrating a Postgres-then-FAISS delete,
+  `app/embedding/index.py` gaining `FaissIndex.remove`/`OwnerFaissIndexStore.remove` over FAISS's
+  previously-unused `remove_ids`); the Documents page now shows a real "Delete" button for
+  ingested documents (calling the new endpoint) and a "Dismiss" button for failed in-flight
+  uploads (local-only, since a failed job never gets a Postgres row to delete). Both
+  live-verified end-to-end against the real local stack (Postgres/Redis/Ollama): a real PDF
+  ingested, retrieved, deleted, and a repeat retrieval confirmed both the Postgres rows *and*
+  the FAISS vectors were actually gone (not just orphaned) — reproducing and then fixing the
+  exact "hi conversation with an empty chat pane" scenario from the reported screenshot along
+  the way. Verified: backend ruff/mypy clean, 424 tests passing (was 383), 97% coverage;
+  frontend `tsc`/`oxlint` clean, 24 vitest tests passing (was 22). See `.ai/tickets/ERP-048.md`
+  and `ERP-049.md` for full detail. **ERP-043 itself is now Done** (the walkthrough this ticket
+  had been waiting on is complete) — see its Resolution note. **ERP-050** (visual/UX redesign)
+  is opened as `Backlog`, explicitly deferred until after these two, with NotebookLM-style
+  design research already attached to its notes for whenever it's picked up.
 - **ERP-047 is Done (2026-09-17)** [Bug] — the live VM outage from a PDF upload is fully fixed.
   `docling`'s fallback parser now runs on a separate Cloud Run service
   (`deploy/cloud_run_docling/`), called over HTTP with GCP IAM auth (no stored secret);
@@ -142,10 +170,9 @@ check what's still open from that session:
 All three are `Status: Backlog`, un-started. ERP-043 itself (Web UI) is deployed and live at
 `https://frontend-sigma-one-54.vercel.app`, iterated through two live-review bugfix rounds
 (PRs #38, #39: SPA-routing 404 on refresh, cross-user localStorage leakage, a page that could
-hang forever on a slow `/auth/me` fetch — all fixed) but not yet marked `Done` pending one more
-walkthrough through the actual UI (backend confirmed working end-to-end via direct API calls —
-ingestion, docling fallback, and generation/chat all verified `200` as of 2026-09-17/18 — the
-remaining gap is clicking through the real deployed frontend once more, not a known bug).
+hang forever on a slow `/auth/me` fetch — all fixed), and is now `Status: Done` (2026-09-18)
+after a final walkthrough surfaced two more real gaps, fixed the same day as ERP-048/ERP-049
+(see the "Next Planned Work" entry above), plus ERP-050 opened as deferred visual-polish backlog.
 
 **Older deferred items:**
 
