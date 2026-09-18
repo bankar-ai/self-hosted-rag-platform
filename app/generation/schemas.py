@@ -21,6 +21,15 @@ class GenerationQuery(BaseModel):
     rerank: bool = Field(default=False)
     expand_sections: bool = Field(default=False)
     conversation_id: uuid.UUID | None = Field(default=None)
+    document_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Restrict retrieval to these document IDs (ERP-044). Omitted/null searches "
+            "everything the caller owns, unchanged from before this field existed; an empty "
+            "list explicitly searches nothing, short-circuiting to the same 'not enough "
+            "information' answer as a genuinely empty retrieval result."
+        ),
+    )
 
 
 class ConversationTurn(BaseModel):

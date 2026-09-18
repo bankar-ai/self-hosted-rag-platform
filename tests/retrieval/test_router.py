@@ -120,6 +120,55 @@ def test_query_returns_ingested_chunk(simple_text_pdf, auth_headers):
     assert expanded_results[0]["document_id"] == status_body["result"]["document_id"]
 
 
+def _upload_and_wait(pdf_path, headers) -> str:
+    with open(pdf_path, "rb") as pdf_file:
+        upload = client.post(
+            "/ingestion/pdf",
+            files={"file": ("doc.pdf", pdf_file, "application/pdf")},
+            headers=headers,
+        )
+    job_id = upload.json()["job_id"]
+    deadline = time.monotonic() + 60.0
+    status_body = None
+    while time.monotonic() < deadline:
+        status_body = client.get(f"/ingestion/jobs/{job_id}", headers=headers).json()
+        if status_body["status"] in ("done", "failed"):
+            break
+        time.sleep(0.1)
+    assert status_body is not None and status_body["status"] == "done"
+    return status_body["result"]["document_id"]
+
+
+def test_query_with_document_ids_restricts_to_that_document(simple_text_pdf, auth_headers):
+    document_id_a = _upload_and_wait(simple_text_pdf, auth_headers)
+    document_id_b = _upload_and_wait(simple_text_pdf, auth_headers)
+
+    response = client.post(
+        "/retrieval/query",
+        json={"query": "introduction", "top_k": 10, "document_ids": [document_id_a]},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert results
+    assert all(r["document_id"] == document_id_a for r in results)
+    assert all(r["document_id"] != document_id_b for r in results)
+
+
+def test_query_with_empty_document_ids_returns_no_results(simple_text_pdf, auth_headers):
+    _upload_and_wait(simple_text_pdf, auth_headers)
+
+    response = client.post(
+        "/retrieval/query",
+        json={"query": "introduction", "document_ids": []},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"results": []}
+
+
 def test_query_does_not_return_another_users_document(simple_text_pdf):
     owner_a_headers = _register_and_login("isolation-a")
     owner_b_headers = _register_and_login("isolation-b")

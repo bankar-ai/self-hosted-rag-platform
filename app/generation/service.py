@@ -115,6 +115,7 @@ def generate(
     conversation_id: uuid.UUID | None = None,
     settings: GenerationSettings | None = None,
     llm_client: LLMClient | None = None,
+    document_ids: list[str] | None = None,
 ) -> GenerationResponse:
     """Retrieve context for `query` (scoped to `owner_id`) and synthesize a grounded, citation-marked answer.
 
@@ -149,7 +150,9 @@ def generate(
         if _GREETING_RE.match(query):
             return GenerationResponse(answer=GREETING_ANSWER, citations=[], conversation_id=None)
 
-        chunks = retrieval_search(query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections)
+        chunks = retrieval_search(
+            query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections, document_ids=document_ids
+        )
         if not chunks:
             return GenerationResponse(answer=NO_CONTEXT_ANSWER, citations=[], conversation_id=None)
 
@@ -181,7 +184,12 @@ def generate(
             rewritten_query = query
 
         chunks = retrieval_search(
-            rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
+            rewritten_query,
+            top_k,
+            owner_id,
+            rerank=rerank,
+            expand_sections=expand_sections,
+            document_ids=document_ids,
         )
         if not chunks:
             answer = NO_CONTEXT_ANSWER
@@ -217,6 +225,7 @@ def generate_stream(
     conversation_id: uuid.UUID | None = None,
     settings: GenerationSettings | None = None,
     llm_client: LLMClient | None = None,
+    document_ids: list[str] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Streaming counterpart to `generate`: yields `(event, data)` tuples instead of returning one response.
 
@@ -248,7 +257,12 @@ def generate_stream(
                 return
 
             chunks = retrieval_search(
-                query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
+                query,
+                top_k,
+                owner_id,
+                rerank=rerank,
+                expand_sections=expand_sections,
+                document_ids=document_ids,
             )
             if not chunks:
                 yield "token", {"text": NO_CONTEXT_ANSWER}
@@ -290,7 +304,12 @@ def generate_stream(
                 rewritten_query = query
 
             chunks = retrieval_search(
-                rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
+                rewritten_query,
+                top_k,
+                owner_id,
+                rerank=rerank,
+                expand_sections=expand_sections,
+                document_ids=document_ids,
             )
             if not chunks:
                 yield "token", {"text": NO_CONTEXT_ANSWER}

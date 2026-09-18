@@ -19,6 +19,7 @@ from app.embedding.index import OwnerFaissIndexStore
 from app.ingestion.repository import (
     get_chunks_by_vector_ids,
     get_sibling_chunks,
+    get_vector_ids_for_documents,
     search_chunks_by_text,
 )
 from app.retrieval.cache import RetrievalCache, get_default_retrieval_cache
@@ -61,20 +62,34 @@ def _reciprocal_rank_fusion(*ranked_id_lists: list[int], k: int = RRF_K) -> list
     return sorted(normalized, key=lambda pair: pair[1], reverse=True)
 
 
-def _cache_key(query: str, top_k: int, rerank: bool, expand_sections: bool, owner_id: uuid.UUID) -> str:
+def _cache_key(
+    query: str,
+    top_k: int,
+    rerank: bool,
+    expand_sections: bool,
+    owner_id: uuid.UUID,
+    document_ids: list[str] | None,
+) -> str:
     """Hash the parameters that determine `search()`'s output, for cache lookups.
 
     `owner_id` is part of the key -- without it, one user's cached results could leak to
-    another user issuing the same query text.
+    another user issuing the same query text. `document_ids` (ERP-044) is sorted before
+    hashing so the same set in a different order still hits the same cache entry; `None`
+    (unrestricted) and `[]` (explicitly empty) hash differently from each other and from any
+    real set, since they're semantically distinct.
     """
     query_bytes = query.encode()
     owner_bytes = str(owner_id).encode()
+    document_ids_bytes = (
+        "\x00".join(sorted(document_ids)).encode() if document_ids is not None else b"\x01"
+    )
     payload = (
         len(query_bytes).to_bytes(4, "big")
         + query_bytes
         + top_k.to_bytes(4, "big")
         + bytes([rerank, expand_sections])
         + owner_bytes
+        + document_ids_bytes
     )
     return hashlib.sha256(payload).hexdigest()
 
@@ -125,6 +140,7 @@ def search(
     expand_sections: bool = False,
     cache: RetrievalCache | None = None,
     retrieval_settings: RetrievalSettings | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
     """Run hybrid (vector + BM25) search restricted to `owner_id`'s documents.
 
@@ -160,9 +176,20 @@ def search(
     genuinely relevant they are. BM25 is unaffected (its own `ts_rank` is a real relevance
     signal already). If this drops every vector candidate and BM25 also finds nothing,
     `search()` returns `[]` exactly as it already does for an empty index.
+
+    `document_ids` (ERP-044), if given, restricts both legs to only chunks from those
+    documents -- `None` (the default) searches everything `owner_id` owns, unchanged from
+    before this parameter existed; `[]` explicitly searches nothing and returns `[]`
+    immediately, distinct from `None`. The vector leg is restricted via FAISS's own
+    `IDSelectorBatch` at search time (not a post-hoc filter over an unrestricted top-`k`,
+    which could miss a real match entirely if the target document wasn't already in the top
+    `candidate_k` overall); the BM25 leg is restricted via a SQL `IN` clause.
     """
+    if document_ids == []:
+        return []
+
     cache = cache or get_default_retrieval_cache()
-    cache_key = _cache_key(query, top_k, rerank, expand_sections, owner_id)
+    cache_key = _cache_key(query, top_k, rerank, expand_sections, owner_id, document_ids)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -178,19 +205,29 @@ def search(
     vectors = embedding_client.embed([query])
     if not vectors:
         raise ValueError("embedding client returned no vectors for the query")
-    vector_hits = faiss_index_store.search(owner_id, vectors[0], candidate_k)
-    retrieval_settings = retrieval_settings or get_retrieval_settings()
-    if retrieval_settings.max_relevant_distance is not None:
-        vector_hits = [
-            (vector_id, distance)
-            for vector_id, distance in vector_hits
-            if distance <= retrieval_settings.max_relevant_distance
-        ]
-    vector_ranked_ids = [vector_id for vector_id, _ in vector_hits]
 
     session_factory = get_session_factory()
     with session_factory() as session:
-        bm25_hits = search_chunks_by_text(session, query, candidate_k, owner_id)
+        allowed_vector_ids = (
+            get_vector_ids_for_documents(session, owner_id, document_ids)
+            if document_ids is not None
+            else None
+        )
+        vector_hits = faiss_index_store.search(
+            owner_id, vectors[0], candidate_k, allowed_vector_ids=allowed_vector_ids
+        )
+        retrieval_settings = retrieval_settings or get_retrieval_settings()
+        if retrieval_settings.max_relevant_distance is not None:
+            vector_hits = [
+                (vector_id, distance)
+                for vector_id, distance in vector_hits
+                if distance <= retrieval_settings.max_relevant_distance
+            ]
+        vector_ranked_ids = [vector_id for vector_id, _ in vector_hits]
+
+        bm25_hits = search_chunks_by_text(
+            session, query, candidate_k, owner_id, document_ids=document_ids
+        )
         bm25_ranked_ids = [vector_id for vector_id, _ in bm25_hits]
 
         with get_tracer().start_as_current_span("retrieval.fuse") as span:

@@ -6,6 +6,7 @@ from app.ingestion.repository import (
     delete_document,
     get_chunks_by_vector_ids,
     get_sibling_chunks,
+    get_vector_ids_for_documents,
     list_documents_for_owner,
     save_document_and_chunks,
     search_chunks_by_text,
@@ -259,3 +260,98 @@ def test_delete_document_wrong_owner_returns_none_and_deletes_nothing():
 
     with session_factory() as session:
         assert session.get(DocumentRecord, document_id) is not None
+
+
+def test_search_chunks_by_text_restricts_to_given_document_ids():
+    doc_a, doc_b = f"doc-scope-a-{uuid.uuid4()}", f"doc-scope-b-{uuid.uuid4()}"
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        save_document_and_chunks(
+            session, doc_a, "a.pdf", [_chunk(doc_a, 0, text="giraffes are tall mammals")], _TEST_OWNER_ID
+        )
+        save_document_and_chunks(
+            session, doc_b, "b.pdf", [_chunk(doc_b, 0, text="giraffes live in Africa too")], _TEST_OWNER_ID
+        )
+        session.commit()
+
+    with session_factory() as session:
+        results = search_chunks_by_text(
+            session, "giraffes", k=5, owner_id=_TEST_OWNER_ID, document_ids=[doc_a]
+        )
+
+    with session_factory() as session:
+        chunk_a = get_chunks_by_vector_ids(session, [vid for vid, _ in results], _TEST_OWNER_ID)
+        assert all(row.document_id == doc_a for row in chunk_a.values())
+        assert len(results) == 1
+
+
+def test_search_chunks_by_text_document_ids_none_is_unrestricted():
+    document_id = f"doc-scope-unrestricted-{uuid.uuid4()}"
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        chunk = _chunk(document_id, 0, text="wombats burrow at dusk")
+        save_document_and_chunks(session, document_id, "doc.pdf", [chunk], _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        results = search_chunks_by_text(
+            session, "wombats", k=5, owner_id=_TEST_OWNER_ID, document_ids=None
+        )
+
+    assert len(results) == 1
+
+
+def test_search_chunks_by_text_empty_document_ids_returns_nothing():
+    document_id = f"doc-scope-empty-{uuid.uuid4()}"
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        chunk = _chunk(document_id, 0, text="pangolins eat ants")
+        save_document_and_chunks(session, document_id, "doc.pdf", [chunk], _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        results = search_chunks_by_text(
+            session, "pangolins", k=5, owner_id=_TEST_OWNER_ID, document_ids=[]
+        )
+
+    assert results == []
+
+
+def test_get_vector_ids_for_documents_returns_only_requested_documents():
+    doc_a, doc_b = f"doc-vecids-a-{uuid.uuid4()}", f"doc-vecids-b-{uuid.uuid4()}"
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        records_a = save_document_and_chunks(session, doc_a, "a.pdf", [_chunk(doc_a, 0)], _TEST_OWNER_ID)
+        save_document_and_chunks(session, doc_b, "b.pdf", [_chunk(doc_b, 0)], _TEST_OWNER_ID)
+        session.commit()
+        expected = {r.vector_id for r in records_a}
+
+    with session_factory() as session:
+        vector_ids = get_vector_ids_for_documents(session, _TEST_OWNER_ID, [doc_a])
+
+    assert set(vector_ids) == expected
+
+
+def test_get_vector_ids_for_documents_excludes_another_owners_document():
+    document_id = f"doc-vecids-other-owner-{uuid.uuid4()}"
+    other_owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        save_document_and_chunks(session, document_id, "doc.pdf", [_chunk(document_id, 0)], _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        vector_ids = get_vector_ids_for_documents(session, other_owner_id, [document_id])
+
+    assert vector_ids == []
+
+
+def test_get_vector_ids_for_documents_empty_input_returns_empty_list():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert get_vector_ids_for_documents(session, _TEST_OWNER_ID, []) == []

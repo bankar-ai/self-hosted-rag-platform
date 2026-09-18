@@ -28,6 +28,7 @@ export interface GenerationRequest {
   rerank?: boolean;
   expand_sections?: boolean;
   conversation_id?: string;
+  document_ids?: string[];
 }
 
 export type JobStatus = "pending" | "processing" | "done" | "failed";

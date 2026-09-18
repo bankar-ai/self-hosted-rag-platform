@@ -83,7 +83,23 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [recentConversations, setRecentConversations] = useState<SidebarConversation[]>([]);
   const [documents, setDocuments] = useState<SidebarDocument[]>([]);
+  // ERP-044: opt-out model -- a document is included in every query's scope unless the user
+  // has explicitly unchecked it, so newly-uploaded documents are selected by default without
+  // needing to sync this set whenever the document list refreshes.
+  const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  function toggleDocumentSelected(id: string): void {
+    setDeselectedDocumentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   // Both lists are hydrated from the backend (not localStorage) so chat history and the
   // document list survive a login from a new browser/device -- the data was always
@@ -216,12 +232,19 @@ export default function ChatPage() {
     setIsStreaming(true);
 
     const isFirstMessage = messages.length === 0;
+    const documentIds = documents
+      .filter((doc) => !deselectedDocumentIds.has(doc.id))
+      .map((doc) => doc.id);
 
     try {
       const response = await apiFetch("/generation/query/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, conversation_id: conversationId }),
+        body: JSON.stringify({
+          query,
+          conversation_id: conversationId,
+          document_ids: documentIds,
+        }),
       });
 
       if (!response.ok) {
@@ -322,13 +345,35 @@ export default function ChatPage() {
           </p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {documents.map((doc) => (
-              <li key={doc.id} className="flex items-center gap-2 px-2 py-1 text-sm text-slate-600">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                <span className="truncate">{doc.title}</span>
-              </li>
-            ))}
+            {documents.map((doc) => {
+              const isSelected = !deselectedDocumentIds.has(doc.id);
+              return (
+                <li key={doc.id}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-200">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 shrink-0 accent-emerald-600"
+                      checked={isSelected}
+                      onChange={() => toggleDocumentSelected(doc.id)}
+                    />
+                    <span className="truncate" title={doc.title}>
+                      {doc.title}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
+        )}
+        {documents.length > 0 && (
+          <p className="mt-1 px-2 text-xs text-slate-400">
+            Answers are grounded only in checked documents.
+          </p>
+        )}
+        {documents.length > 0 && deselectedDocumentIds.size === documents.length && (
+          <p className="mt-1 px-2 text-xs text-amber-600">
+            No documents selected — questions won&apos;t find any answers.
+          </p>
         )}
       </aside>
       <main className="flex flex-1 flex-col bg-white">
