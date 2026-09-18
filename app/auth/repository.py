@@ -7,7 +7,11 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.auth.models import OidcIdentityRecord, RefreshTokenRecord, UserRecord
-from app.generation.models import ConversationMessageRecord, ConversationRecord
+from app.generation.models import (
+    ConversationMessageRecord,
+    ConversationRecord,
+    MessageFeedbackRecord,
+)
 from app.ingestion.models import ChunkRecord, DocumentRecord
 
 
@@ -110,6 +114,17 @@ def delete_user_and_owned_data(session: Session, user_id: uuid.UUID) -> None:
         session.scalars(select(ConversationRecord.id).where(ConversationRecord.owner_id == user_id))
     )
     if conversation_ids:
+        message_ids = list(
+            session.scalars(
+                select(ConversationMessageRecord.id).where(
+                    ConversationMessageRecord.conversation_id.in_(conversation_ids)
+                )
+            )
+        )
+        if message_ids:
+            session.execute(
+                delete(MessageFeedbackRecord).where(MessageFeedbackRecord.message_id.in_(message_ids))
+            )
         session.execute(
             delete(ConversationMessageRecord).where(
                 ConversationMessageRecord.conversation_id.in_(conversation_ids)

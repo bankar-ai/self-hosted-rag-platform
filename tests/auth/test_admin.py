@@ -5,7 +5,7 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.core.db import get_session_factory
-from app.generation.repository import append_message, get_or_create_conversation
+from app.generation.repository import append_message, get_or_create_conversation, set_message_feedback
 from app.ingestion.repository import save_document_and_chunks
 from app.ingestion.schemas import Chunk
 from app.main import app
@@ -150,6 +150,10 @@ def test_admin_can_delete_a_user_and_their_owned_data():
         conversation_id = uuid.uuid4()
         get_or_create_conversation(session, conversation_id, user_id)
         append_message(session, conversation_id, "user", "hello")
+        assistant_message = append_message(session, conversation_id, "assistant", "hi there")
+        # A rated message (ERP-045) -- regression coverage for a real bug found live: deleting
+        # conversation_messages before message_feedback violates a foreign key.
+        set_message_feedback(session, assistant_message.id, user_id, "up")
         session.commit()
 
     response = client.delete(f"/admin/users/{user_id}", headers=admin_headers)
