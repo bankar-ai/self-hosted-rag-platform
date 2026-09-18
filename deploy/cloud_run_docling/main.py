@@ -9,10 +9,27 @@ import os
 import tempfile
 from typing import Any
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.settings import settings as docling_settings
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from fastapi import FastAPI, HTTPException, UploadFile
 
 _PAGE_BREAK = "\n\n<!-- docling-page-break -->\n\n"
+
+# Models are pre-downloaded at Docker build time (`docling-tools models download`, baked into
+# the image) to `settings.cache_dir / "models"` -- pointing the converter at that path
+# explicitly makes it run fully offline. Without this, docling falls back to checking
+# HuggingFace at request time even with a populated cache, which hit HF's rate limit in
+# practice on Cloud Run's first real request.
+_artifacts_path = docling_settings.cache_dir / "models"
+_converter = DocumentConverter(
+    format_options={
+        InputFormat.PDF: PdfFormatOption(
+            pipeline_options=PdfPipelineOptions(artifacts_path=_artifacts_path)
+        )
+    }
+)
 
 app = FastAPI(title="docling parsing service")
 
@@ -31,8 +48,7 @@ async def parse(file: UploadFile) -> list[dict[str, Any]]:
         tmp.write(contents)
         tmp.close()
         try:
-            converter = DocumentConverter()
-            result = converter.convert(tmp.name)
+            result = _converter.convert(tmp.name)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {exc}") from exc
     finally:

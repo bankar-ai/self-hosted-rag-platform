@@ -299,10 +299,27 @@ import os
 import tempfile
 from typing import Any
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.settings import settings as docling_settings
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from fastapi import FastAPI, HTTPException, UploadFile
 
 _PAGE_BREAK = "\n\n<!-- docling-page-break -->\n\n"
+
+# Models are pre-downloaded at Docker build time (`docling-tools models download`, baked into
+# the image) to `settings.cache_dir / "models"` -- pointing the converter at that path
+# explicitly makes it run fully offline. Found live: without this, docling still checks
+# HuggingFace at request time even with a populated cache, which hit HF's rate limit on Cloud
+# Run's first real request and failed the whole job.
+_artifacts_path = docling_settings.cache_dir / "models"
+_converter = DocumentConverter(
+    format_options={
+        InputFormat.PDF: PdfFormatOption(
+            pipeline_options=PdfPipelineOptions(artifacts_path=_artifacts_path)
+        )
+    }
+)
 
 app = FastAPI(title="docling parsing service")
 
@@ -323,8 +340,7 @@ async def parse(file: UploadFile) -> list[dict[str, Any]]:
         tmp.write(contents)
         tmp.close()
         try:
-            converter = DocumentConverter()
-            result = converter.convert(tmp.name)
+            result = _converter.convert(tmp.name)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {exc}") from exc
     finally:
@@ -357,8 +373,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# opencv-python (pulled in transitively by docling's rapidocr OCR backend) needs these X11/GL
+# shared libraries at import time -- python:3.12-slim's minimal base doesn't include them.
+# Found live: the build failed with "ImportError: libxcb.so.1: cannot open shared object file"
+# the first time this image tried to actually import cv2.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download docling's model weights at build time -- baked into the image layer, not
+# fetched from HuggingFace at request time (which hit HF's rate limit in practice on cold
+# start, causing the first real request to fail outright rather than just being slow).
+RUN docling-tools models download
 
 COPY main.py .
 
