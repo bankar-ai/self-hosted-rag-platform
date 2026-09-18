@@ -11,13 +11,17 @@ from app.generation.config import GenerationSettings, get_generation_settings
 from app.generation.prompt import SYSTEM_PROMPT, build_prompt
 from app.generation.repository import (
     append_message,
+    clear_message_feedback,
     get_all_messages,
     get_conversation,
     get_conversation_owner_id,
+    get_feedback_for_messages,
     get_first_user_messages,
     get_or_create_conversation,
     get_recent_messages,
     list_conversations_for_owner,
+    set_message_feedback,
+    title_exists_for_owner,
 )
 from app.generation.repository import (
     rename_conversation as repository_rename_conversation,
@@ -57,7 +61,14 @@ class ConversationAccessDeniedError(Exception):
     """Raised when a client-supplied `conversation_id` already exists but belongs to a different owner."""
 
 
-_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]")
+class ConversationTitleConflictError(Exception):
+    """Raised when a rename would collide with another of the same owner's conversation titles."""
+
+
+# Matches both "[1]" and "[1, 2, 5]" -- a model asked to cite [1], [2], etc. sometimes bundles
+# several into one bracket instead of writing separate markers (ERP-065). Each match's captured
+# group is itself comma-split in `_cited_chunks` below.
+_CITATION_MARKER_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 
 
 def _cited_chunks(answer: str, included_chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
@@ -69,7 +80,9 @@ def _cited_chunks(answer: str, included_chunks: list[RetrievedChunk]) -> list[Re
     instructions. Preserves `included_chunks`' original order (ERP-055) -- a chunk the model
     never referenced is not returned, even though it was present in its context window.
     """
-    cited_indices = {int(match) for match in _CITATION_MARKER_RE.findall(answer)}
+    cited_indices: set[int] = set()
+    for match in _CITATION_MARKER_RE.findall(answer):
+        cited_indices.update(int(piece) for piece in match.split(","))
     return [
         chunk
         for index, chunk in enumerate(included_chunks, start=1)
@@ -184,10 +197,15 @@ def generate(
     with session_factory() as write_session:
         get_or_create_conversation(write_session, conversation_id, owner_id)
         append_message(write_session, conversation_id, "user", query)
-        append_message(write_session, conversation_id, "assistant", answer)
+        assistant_record = append_message(write_session, conversation_id, "assistant", answer)
         write_session.commit()
 
-    return GenerationResponse(answer=answer, citations=citations, conversation_id=conversation_id)
+    return GenerationResponse(
+        answer=answer,
+        citations=citations,
+        conversation_id=conversation_id,
+        assistant_message_id=assistant_record.id,
+    )
 
 
 def generate_stream(
@@ -203,8 +221,10 @@ def generate_stream(
     """Streaming counterpart to `generate`: yields `(event, data)` tuples instead of returning one response.
 
     Event sequence on success: zero or more `("token", {"text": "..."})` (one per chunk of
-    generated text), then one `("citations", {"citations": [...]})`, then a terminal
-    `("done", {"conversation_id": str | None})`. Citations are emitted after the tokens, not
+    generated text), then one `("citations", {"citations": [...]})`, then a terminal `("done",
+    {"conversation_id": str | None})` -- for a stateful request, that payload also carries
+    `"assistant_message_id"` (the persisted assistant turn's ID, ERP-045), omitted for a
+    stateless one since nothing is persisted. Citations are emitted after the tokens, not
     before (ERP-055) -- which chunks were actually cited can only be known once the full
     answer text exists, since only chunks referenced by a `[n]` marker in that text are
     included (see `_cited_chunks`). On any failure, yields a terminal `("error", {"detail":
@@ -292,10 +312,13 @@ def generate_stream(
         with session_factory() as write_session:
             get_or_create_conversation(write_session, conversation_id, owner_id)
             append_message(write_session, conversation_id, "user", query)
-            append_message(write_session, conversation_id, "assistant", answer)
+            assistant_record = append_message(write_session, conversation_id, "assistant", answer)
             write_session.commit()
 
-        yield "done", {"conversation_id": str(conversation_id)}
+        yield "done", {
+            "conversation_id": str(conversation_id),
+            "assistant_message_id": str(assistant_record.id),
+        }
     except Exception:
         logger.exception("Streaming generation failed")
         yield "error", {"detail": "Generation query failed"}
@@ -314,9 +337,16 @@ def get_conversation_history(
         if get_conversation(session, conversation_id, owner_id) is None:
             return None
         records = get_all_messages(session, conversation_id)
+        feedback_by_message_id = get_feedback_for_messages(session, [r.id for r in records])
 
     messages = [
-        Message(role=record.role, content=record.content, created_at=record.created_at)
+        Message(
+            id=record.id,
+            role=record.role,
+            content=record.content,
+            created_at=record.created_at,
+            feedback=feedback_by_message_id.get(record.id),
+        )
         for record in records
     ]
     return ConversationHistoryResponse(conversation_id=conversation_id, messages=messages)
@@ -349,10 +379,45 @@ def list_conversations(owner_id: uuid.UUID) -> ConversationListResponse:
 
 
 def rename_conversation(conversation_id: uuid.UUID, owner_id: uuid.UUID, title: str) -> bool:
-    """Set `conversation_id`'s explicit title. Returns `False` if unknown or not owned by `owner_id`."""
+    """Set `conversation_id`'s explicit title. Returns `False` if unknown or not owned by `owner_id`.
+
+    Raises `ConversationTitleConflictError` (before touching anything) if `owner_id` already has
+    a different conversation with the same title, case-insensitively (ERP-062) -- renaming a
+    conversation to its own current title is not a conflict.
+    """
     session_factory = get_session_factory()
     with session_factory() as session:
+        if title_exists_for_owner(session, owner_id, title, exclude_conversation_id=conversation_id):
+            raise ConversationTitleConflictError
         renamed = repository_rename_conversation(session, conversation_id, owner_id, title)
         if renamed:
             session.commit()
     return renamed
+
+
+def set_feedback(message_id: uuid.UUID, owner_id: uuid.UUID, rating: str) -> bool:
+    """Set (upsert) `owner_id`'s feedback for `message_id`.
+
+    Returns `False` if the message doesn't exist or isn't owned (via its conversation) by
+    `owner_id` -- the router maps this to a 404.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        set_result = set_message_feedback(session, message_id, owner_id, rating)
+        if set_result:
+            session.commit()
+    return set_result
+
+
+def clear_feedback(message_id: uuid.UUID, owner_id: uuid.UUID) -> bool:
+    """Clear `owner_id`'s feedback for `message_id`, if any.
+
+    Returns `False` if the message doesn't exist or isn't owned by `owner_id`; `True` (a
+    no-op) if it's owned but has no feedback to clear.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        cleared = clear_message_feedback(session, message_id, owner_id)
+        if cleared:
+            session.commit()
+    return cleared

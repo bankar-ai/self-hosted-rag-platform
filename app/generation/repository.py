@@ -1,11 +1,16 @@
 """Persistence for multi-turn conversations."""
 
 import uuid
+from typing import Literal, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.generation.models import ConversationMessageRecord, ConversationRecord
+from app.generation.models import (
+    ConversationMessageRecord,
+    ConversationRecord,
+    MessageFeedbackRecord,
+)
 
 
 def get_or_create_conversation(
@@ -21,6 +26,26 @@ def get_or_create_conversation(
         session.add(conversation)
         session.flush()
     return conversation
+
+
+def title_exists_for_owner(
+    session: Session, owner_id: uuid.UUID, title: str, exclude_conversation_id: uuid.UUID
+) -> bool:
+    """Return whether `owner_id` already has a conversation titled `title` (case-insensitive).
+
+    `exclude_conversation_id` is left out of the check so renaming a conversation to its own
+    current title is never reported as a conflict with itself (ERP-062).
+    """
+    return (
+        session.execute(
+            select(ConversationRecord.id).where(
+                ConversationRecord.owner_id == owner_id,
+                ConversationRecord.id != exclude_conversation_id,
+                func.lower(ConversationRecord.title) == title.lower(),
+            )
+        ).first()
+        is not None
+    )
 
 
 def rename_conversation(
@@ -146,3 +171,62 @@ def get_first_user_messages(
         )
     ).all()
     return {row.conversation_id: row.content for row in rows}
+
+
+def _message_owned_by(session: Session, message_id: uuid.UUID, owner_id: uuid.UUID) -> bool:
+    """Return whether `message_id` exists and belongs to a conversation owned by `owner_id`."""
+    message = session.get(ConversationMessageRecord, message_id)
+    if message is None:
+        return False
+    conversation = session.get(ConversationRecord, message.conversation_id)
+    return conversation is not None and conversation.owner_id == owner_id
+
+
+def set_message_feedback(
+    session: Session, message_id: uuid.UUID, owner_id: uuid.UUID, rating: str
+) -> bool:
+    """Set (upsert) `owner_id`'s feedback for `message_id`.
+
+    Returns `False` (does nothing) if the message doesn't exist or doesn't belong to a
+    conversation owned by `owner_id` -- a viewer can only ever rate their own messages,
+    checked via this join rather than trusting a bare message ID. Does not commit.
+    """
+    if not _message_owned_by(session, message_id, owner_id):
+        return False
+    feedback = session.get(MessageFeedbackRecord, message_id)
+    if feedback is None:
+        session.add(MessageFeedbackRecord(message_id=message_id, owner_id=owner_id, rating=rating))
+    else:
+        feedback.rating = rating
+    return True
+
+
+def clear_message_feedback(session: Session, message_id: uuid.UUID, owner_id: uuid.UUID) -> bool:
+    """Remove `owner_id`'s feedback for `message_id`, if any. Does not commit.
+
+    Returns `False` if the message doesn't exist or isn't owned by `owner_id`; returns `True`
+    (a no-op) if the message is owned but simply has no feedback to clear.
+    """
+    if not _message_owned_by(session, message_id, owner_id):
+        return False
+    feedback = session.get(MessageFeedbackRecord, message_id)
+    if feedback is not None:
+        session.delete(feedback)
+    return True
+
+
+def get_feedback_for_messages(
+    session: Session, message_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Literal["up", "down"]]:
+    """Return each message's feedback rating, keyed by `message_id`. `{}` for empty input.
+
+    A message with no feedback is simply absent from the result -- batched, not N+1. The cast
+    is safe: `rating` is only ever written by `set_message_feedback`, which only ever receives
+    an already-`Literal["up", "down"]`-validated value from the API layer.
+    """
+    if not message_ids:
+        return {}
+    rows = session.scalars(
+        select(MessageFeedbackRecord).where(MessageFeedbackRecord.message_id.in_(message_ids))
+    ).all()
+    return {row.message_id: cast('Literal["up", "down"]', row.rating) for row in rows}
