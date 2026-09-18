@@ -94,7 +94,13 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
-- **A five-ticket batch (ERP-045, ERP-062, ERP-063, ERP-064, ERP-065) was completed 2026-09-18**
+- **ERP-066 (2026-09-18)**: `DELETE /admin/users/{id}` 500'd for any user with a rated message
+  -- a real regression from ERP-045 (below), caught during this session's own post-deploy
+  cleanup, not a user report. `delete_user_and_owned_data` didn't know about the new
+  `message_feedback` table; fixed, regression-tested, and live-verified (reproduced the exact
+  `500`, deployed the fix, confirmed the same call now returns `204`).
+- **A five-ticket batch (ERP-045, ERP-062, ERP-063, ERP-064, ERP-065) was completed, deployed,
+  and live-verified 2026-09-18**
   from a fresh round of live UI feedback, deliberately scoped to same-session-sized work —
   **ERP-044 (document-scoped retrieval) and ERP-050 (visual redesign) were explicitly left out**
   as bigger, separately-scoped efforts. Summary:
