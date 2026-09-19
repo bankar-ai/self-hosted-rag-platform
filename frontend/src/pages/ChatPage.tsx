@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CopyButton from "../components/CopyButton";
 import Sidebar, { type SidebarConversation, type SidebarDocument } from "../components/Sidebar";
-import SourcePanel from "../components/SourcePanel";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { renderMarkdownLite } from "../lib/markdownLite";
@@ -22,6 +21,11 @@ interface ChatMessage {
   citations?: Citation[];
   feedback?: "up" | "down" | null;
 }
+
+// ERP-081: SourcePanel pulls in react-markdown/rehype-raw/rehype-sanitize (ERP-067), which
+// nearly doubled the bundle -- it's only ever needed once a citation is clicked, so it's
+// split into its own chunk rather than loaded on every page visit.
+const SourcePanel = lazy(() => import("../components/SourcePanel"));
 
 function newConversationId(): string {
   return crypto.randomUUID();
@@ -465,7 +469,11 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
-      <SourcePanel citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
+      {selectedCitation && (
+        <Suspense fallback={<aside className="w-80 shrink-0 border-l border-slate-200 bg-slate-50" />}>
+          <SourcePanel citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
+        </Suspense>
+      )}
     </div>
   );
 }
