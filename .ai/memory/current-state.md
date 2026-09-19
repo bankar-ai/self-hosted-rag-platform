@@ -94,6 +94,37 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **A follow-up batch (ERP-067 through ERP-074) closed out live feedback from ERP-050's own
+  first use (2026-09-19)**, deployed and live-verified: **ERP-074** — `Button` gained a
+  `variant` prop, fixing invisible Delete/Retry/Dismiss text (a Tailwind cascade-order conflict
+  between a hardcoded default color and per-call-site overrides). **ERP-067** — `SourcePanel`
+  now renders chunk text via `react-markdown`/`rehype-raw`/`rehype-sanitize` instead of literal
+  `**`/`#####`/`<mark>` syntax (bundle grew ~285KB→~580KB minified, flagged as a follow-up to
+  lazy-load `SourcePanel`, not a blocker). **ERP-068** — copy-to-clipboard for a message, a
+  conversation, and a source panel's text via one shared `CopyButton`. **ERP-069** — a confirmed
+  live hallucination (a fabricated date not in the cited source) fixed by tightening
+  `SYSTEM_PROMPT` to forbid stating any specific fact not verbatim present in context —
+  **live-reproduced the exact failing conversation against production** before/after, confirming
+  the fix. **ERP-070/ERP-073** — Documents-page uploads now stage behind an explicit "Upload"
+  button instead of starting immediately, and a failed upload *transfer* shows a dismissible
+  "Try again" state instead of silently vanishing. **ERP-071** — bulk delete + a
+  `window.confirm` gate before any delete. **ERP-072** — new `DELETE /ingestion/jobs/{job_id}`
+  actually cleans up a dismissed failed job's temp file (previously leaked disk space
+  indefinitely) — **live-verified via SSH**: uploaded a file that fails ingestion, confirmed its
+  temp file existed on the VM, dismissed it via the new endpoint, confirmed via a second SSH
+  check the file and its parent directory were gone. Built via subagent-driven development (7
+  tasks); one task (ERP-072's backend half) went through a fix round after task review caught an
+  unauthorized retry-loop-plus-unrelated-function-edit deviation chasing a Windows-only test
+  flake, reverted to the plan's simple code with the flake fixed at its actual root instead. The
+  final whole-branch review then caught and fixed a real Critical bug before merge: the plan's
+  own `handleRetry` wiring called the new backend-deleting dismiss function, which raced
+  `retry_job`'s deliberate reuse of the same temp file — starting a retry could delete the file
+  the retry itself needed, an unrecoverable data-loss bug in the pre-existing ERP-053 retry
+  feature — fixed by splitting dismiss into a local-only (retry-safe) cleanup and the full
+  backend-deleting version (explicit Dismiss only), plus two related Important fixes (a failed
+  bulk-delete silently looking like it succeeded in the UI; a network error leaving delete rows
+  stuck disabled forever). Backend 508→516 tests, frontend 36→55 tests (`DocumentsPage.test.tsx`
+  is this page's first test file). Merged to `develop` via PR #50.
 - **ERP-050 (Visual/UX Redesign) is Done, deployed, and live-verified (2026-09-19)**: a caller
   can now click any citation — the citation list below an answer, or (new) a clickable inline
   `[n]` marker in the answer text itself — to open a right-hand source panel showing the exact
