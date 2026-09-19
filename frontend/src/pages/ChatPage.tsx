@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Sidebar, { type SidebarConversation, type SidebarDocument } from "../components/Sidebar";
+import SourcePanel from "../components/SourcePanel";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { renderMarkdownLite } from "../lib/markdownLite";
@@ -78,6 +79,7 @@ export default function ChatPage() {
   // has explicitly unchecked it, so newly-uploaded documents are selected by default without
   // needing to sync this set whenever the document list refreshes.
   const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
+  const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function toggleDocumentSelected(id: string): void {
@@ -148,6 +150,7 @@ export default function ChatPage() {
   function startNewConversation(): void {
     setConversationId(newConversationId());
     setMessages([]);
+    setSelectedCitation(null);
   }
 
   /**
@@ -176,6 +179,7 @@ export default function ChatPage() {
 
   async function selectConversation(id: string): Promise<void> {
     setConversationId(id);
+    setSelectedCitation(null);
     await loadConversationHistory(id);
   }
 
@@ -332,21 +336,21 @@ export default function ChatPage() {
                   {isPendingAssistant ? (
                     <TypingIndicator />
                   ) : (
-                    <div className="text-sm">{renderMarkdownLite(message.content)}</div>
+                    <div className="text-sm">
+                      {renderMarkdownLite(message.content, message.citations ?? [], setSelectedCitation)}
+                    </div>
                   )}
                   {message.citations && message.citations.length > 0 && (
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
                       {message.citations.map((citation, citationIndex) => (
                         <li key={citation.chunk_id}>
-                          <details>
-                            <summary className="cursor-pointer">
-                              [{citationIndex + 1}] {formatCitation(citation)}
-                            </summary>
-                            <p className="mt-0.5 pl-3 text-slate-400">
-                              Relevance score: {citation.score.toFixed(3)}
-                              {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
-                            </p>
-                          </details>
+                          <button
+                            type="button"
+                            className="text-left hover:text-slate-700 hover:underline"
+                            onClick={() => setSelectedCitation(citation)}
+                          >
+                            [{citationIndex + 1}] {formatCitation(citation)}
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -403,6 +407,7 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
+      <SourcePanel citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
     </div>
   );
 }
