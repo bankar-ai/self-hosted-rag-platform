@@ -130,4 +130,137 @@ describe("DocumentsPage", () => {
 
     await waitFor(() => expect(uploadSpy).toHaveBeenCalledTimes(2));
   });
+
+  it("shows a confirmation before deleting, and does nothing if declined", async () => {
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.endsWith("/documents")) {
+        return new Response(
+          JSON.stringify({
+            documents: [{ document_id: "d1", filename: "existing.pdf", created_at: "2026-01-01T00:00:00Z" }],
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText("existing.pdf"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(window.confirm).toHaveBeenCalled();
+    expect(screen.getByText("existing.pdf")).toBeInTheDocument();
+  });
+
+  it("deletes a document when the confirmation is accepted", async () => {
+    const deleteCalls: string[] = [];
+    stubAuthAndEmptyDocuments((url, init) => {
+      if (url.includes("/documents/") && init?.method === "DELETE") {
+        deleteCalls.push(url);
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/documents")) {
+        return new Response(
+          JSON.stringify({
+            documents: [{ document_id: "d1", filename: "existing.pdf", created_at: "2026-01-01T00:00:00Z" }],
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText("existing.pdf"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(deleteCalls).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText("existing.pdf")).not.toBeInTheDocument());
+  });
+
+  it("deletes multiple selected documents via bulk delete", async () => {
+    const deleteCalls: string[] = [];
+    stubAuthAndEmptyDocuments((url, init) => {
+      if (url.includes("/documents/") && init?.method === "DELETE") {
+        deleteCalls.push(url);
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/documents")) {
+        return new Response(
+          JSON.stringify({
+            documents: [
+              { document_id: "d1", filename: "one.pdf", created_at: "2026-01-01T00:00:00Z" },
+              { document_id: "d2", filename: "two.pdf", created_at: "2026-01-01T00:00:00Z" },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText("one.pdf"));
+
+    await userEvent.click(screen.getByLabelText(/select all/i));
+    await userEvent.click(screen.getByRole("button", { name: /delete selected \(2\)/i }));
+
+    await waitFor(() => expect(deleteCalls).toHaveLength(2));
+    expect(deleteCalls.some((url) => url.endsWith("/documents/d1"))).toBe(true);
+    expect(deleteCalls.some((url) => url.endsWith("/documents/d2"))).toBe(true);
+  });
+
+  it("calls the delete-job endpoint when a failed upload is dismissed", async () => {
+    let deleteJobCalled = false;
+    stubAuthAndEmptyDocuments((url, init) => {
+      if (url.includes("/ingestion/jobs/job-x") && init?.method === "DELETE") {
+        deleteJobCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/ingestion/jobs/job-x")) {
+        return new Response(JSON.stringify({ status: "failed", error: "boom" }), { status: 200 });
+      }
+      return null;
+    });
+    vi.spyOn(apiClient, "uploadWithProgress").mockResolvedValue({
+      ok: true,
+      status: 202,
+      body: { job_id: "job-x" },
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText(/no documents uploaded yet/i));
+
+    const file = new File(["%PDF-1.4"], "broken.pdf", { type: "application/pdf" });
+    const input = screen.getByLabelText(/choose pdf files/i) as HTMLInputElement;
+    await userEvent.upload(input, file);
+    await userEvent.click(screen.getByRole("button", { name: /upload 1 file/i }));
+
+    await waitFor(() => expect(screen.getByText(/failed/i)).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+
+    await waitFor(() => expect(deleteJobCalled).toBe(true));
+  });
 });
