@@ -25,12 +25,14 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
 
   useEffect(() => {
     if (!citation) return;
+    let cancelled = false;
     setState({ status: "loading" });
     void (async () => {
       try {
         const response = await apiFetch(
           `/documents/${citation.document_id}/chunks/${citation.chunk_id}`
         );
+        if (cancelled) return;
         if (response.status === 404) {
           setState({ status: "not-found" });
           return;
@@ -40,11 +42,15 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
           return;
         }
         const chunk = (await response.json()) as ChunkDetail;
+        if (cancelled) return;
         setState({ status: "loaded", text: chunk.text });
       } catch {
-        setState({ status: "error" });
+        if (!cancelled) setState({ status: "error" });
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [citation, retryToken]);
 
   if (!citation) return null;
@@ -66,6 +72,12 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
           ✕
         </button>
       </div>
+
+      <p className="text-sm font-medium text-slate-900">{citation.source_filename}</p>
+      <p className="mb-3 text-xs text-slate-400">
+        {pages}
+        {citation.section_path.length > 0 ? ` — ${citation.section_path.join(" / ")}` : ""}
+      </p>
 
       {state.status === "loading" && (
         <div className="animate-pulse space-y-2">
@@ -89,19 +101,13 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       )}
 
       {state.status === "loaded" && (
-        <div>
-          <p className="text-sm font-medium text-slate-900">{citation.source_filename}</p>
-          <p className="mb-3 text-xs text-slate-400">
-            {pages}
-            {citation.section_path.length > 0 ? ` — ${citation.section_path.join(" / ")}` : ""}
-          </p>
-          <p className="whitespace-pre-wrap text-sm text-slate-700">{state.text}</p>
-          <p className="mt-3 border-t border-slate-200 pt-2 text-xs text-slate-400">
-            Relevance score: {citation.score.toFixed(3)}
-            {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
-          </p>
-        </div>
+        <p className="whitespace-pre-wrap text-sm text-slate-700">{state.text}</p>
       )}
+
+      <p className="mt-3 border-t border-slate-200 pt-2 text-xs text-slate-400">
+        Relevance score: {citation.score.toFixed(3)}
+        {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
+      </p>
     </aside>
   );
 }

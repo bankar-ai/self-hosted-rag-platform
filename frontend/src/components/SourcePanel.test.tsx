@@ -60,6 +60,8 @@ describe("SourcePanel", () => {
     await waitFor(() =>
       expect(screen.getByText(/no longer available/i)).toBeInTheDocument()
     );
+    expect(screen.getByText("simple.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/relevance score: 0\.870/i)).toBeInTheDocument();
   });
 
   it("shows a retryable error on a network failure, and retries on click", async () => {
@@ -85,6 +87,8 @@ describe("SourcePanel", () => {
     render(<SourcePanel citation={citation} onClose={() => {}} />);
 
     await waitFor(() => expect(screen.getByText(/couldn't load/i)).toBeInTheDocument());
+    expect(screen.getByText("simple.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/relevance score: 0\.870/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
 
     await waitFor(() => expect(screen.getByText("Recovered text.")).toBeInTheDocument());
