@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+@theme {
+  /* A single deliberate accent color (indigo), replacing the ad hoc slate/emerald choices
+     picked file-by-file during the original ERP-043 build -- this is the concrete fix for
+     "very basic looks" (ERP-050): one consistent color for primary actions and active state,
+     not a new design system. */
+  --color-brand: #4f46e5;
+  --color-brand-dark: #4338ca;
+}

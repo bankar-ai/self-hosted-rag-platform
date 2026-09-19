@@ -49,7 +49,9 @@ export default function Sidebar({
             <li key={conv.id} className="flex items-center gap-1">
               <button
                 className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-slate-200 ${
-                  conv.id === activeConversationId ? "bg-slate-200 font-medium" : "text-slate-700"
+                  conv.id === activeConversationId
+                    ? "bg-brand/10 font-medium text-brand-dark"
+                    : "text-slate-700"
                 }`}
                 onClick={() => onSelectConversation(conv.id)}
               >
@@ -82,7 +84,7 @@ export default function Sidebar({
                 <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-200">
                   <input
                     type="checkbox"
-                    className="h-3.5 w-3.5 shrink-0 accent-emerald-600"
+                    className="h-3.5 w-3.5 shrink-0 accent-brand"
                     checked={isSelected}
                     onChange={() => onToggleDocument(doc.id)}
                   />
