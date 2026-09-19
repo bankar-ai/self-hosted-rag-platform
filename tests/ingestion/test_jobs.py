@@ -200,9 +200,15 @@ def test_retry_job_returns_none_for_wrong_owner():
     assert retry_job(job_id, uuid.uuid4()) is None
 
 
-def test_delete_job_removes_the_job_and_unlinks_its_temp_file(tmp_path):
+def test_delete_job_removes_the_job_and_unlinks_its_temp_file(tmp_path, monkeypatch):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
     pdf_path = tmp_path / "leftover.pdf"
-    pdf_path.write_bytes(b"not a real pdf")
+    pdf_path.write_bytes(b"placeholder -- never actually parsed, ingest_pdf is monkeypatched to fail")
     job_id = create_job(_TEST_OWNER_ID, str(pdf_path), "leftover.pdf")
     run_ingestion_job(job_id, str(pdf_path), "leftover.pdf", _settings(), _TEST_OWNER_ID)
     assert get_job(job_id).status == JobStatus.FAILED
@@ -224,9 +230,15 @@ def test_delete_job_returns_false_for_a_job_that_is_not_failed():
     assert delete_job(job_id, _TEST_OWNER_ID) is False
 
 
-def test_delete_job_returns_false_for_wrong_owner(tmp_path):
+def test_delete_job_returns_false_for_wrong_owner(tmp_path, monkeypatch):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
     pdf_path = tmp_path / "leftover2.pdf"
-    pdf_path.write_bytes(b"not a real pdf")
+    pdf_path.write_bytes(b"placeholder -- never actually parsed, ingest_pdf is monkeypatched to fail")
     job_id = create_job(_TEST_OWNER_ID, str(pdf_path), "leftover2.pdf")
     run_ingestion_job(job_id, str(pdf_path), "leftover2.pdf", _settings(), _TEST_OWNER_ID)
 
