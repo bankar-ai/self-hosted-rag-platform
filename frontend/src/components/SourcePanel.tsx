@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { apiFetch } from "../lib/apiClient";
 import type { ChunkDetail, Citation } from "../lib/types";
 
@@ -12,6 +15,15 @@ type PanelState =
   | { status: "loaded"; text: string }
   | { status: "not-found" }
   | { status: "error" };
+
+// PDF parsing sometimes emits <mark>/<u> for highlighted/underlined text -- rehype-sanitize's
+// default schema doesn't allow either tag, so both would otherwise be stripped along with any
+// genuinely unsafe markup. Extending the allow-list, not replacing it, keeps everything else
+// (script tags, event handlers, etc.) sanitized away as normal.
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), "mark", "u"],
+};
 
 /**
  * Right-hand third pane (ERP-050): shows the exact source text a citation refers to. The
@@ -101,7 +113,11 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       )}
 
       {state.status === "loaded" && (
-        <p className="whitespace-pre-wrap text-sm text-slate-700">{state.text}</p>
+        <div className="text-sm text-slate-700 [&_h1]:mb-1 [&_h1]:mt-3 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_h4]:mb-1 [&_h4]:mt-2 [&_h4]:text-sm [&_h4]:font-semibold [&_h5]:mb-1 [&_h5]:mt-2 [&_h5]:text-sm [&_h5]:font-semibold [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_mark]:bg-yellow-200 [&_mark]:px-0.5 [&_u]:underline">
+          <ReactMarkdown rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}>
+            {state.text}
+          </ReactMarkdown>
+        </div>
       )}
 
       <p className="mt-3 border-t border-slate-200 pt-2 text-xs text-slate-400">
