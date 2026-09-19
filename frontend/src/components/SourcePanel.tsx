@@ -112,7 +112,7 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       aria-label={`Source: ${citation.source_filename}`}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
-      className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 focus:outline-none"
+      className="fixed inset-0 z-40 flex w-full flex-col overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 focus:outline-none md:static md:inset-auto md:z-auto md:w-80 md:shrink-0"
     >
       <div className="mb-3 flex items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Source</p>

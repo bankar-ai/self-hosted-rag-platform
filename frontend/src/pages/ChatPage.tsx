@@ -98,6 +98,8 @@ export default function ChatPage() {
   // needing to sync this set whenever the document list refreshes.
   const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  // ERP-078: the sidebar collapses into a toggleable overlay below the `md` breakpoint.
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   // ERP-079: remembers whichever citation marker/list-item was clicked to open the source
   // panel, so closing it (Escape, the close button, or picking another citation) can return
@@ -351,8 +353,20 @@ export default function ChatPage() {
         documents={documents}
         deselectedDocumentIds={deselectedDocumentIds}
         onToggleDocument={toggleDocumentSelected}
+        isOpenOnMobile={isSidebarOpen}
+        onCloseMobile={() => setIsSidebarOpen(false)}
       />
-      <main className="flex flex-1 flex-col bg-white">
+      <main className="flex min-w-0 flex-1 flex-col bg-white">
+        <div className="border-b border-slate-200 px-4 py-2 md:hidden">
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            ☰ Menu
+          </button>
+        </div>
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {messages.length === 0 && (
             <p className="mt-12 text-center text-sm text-slate-400">
@@ -487,7 +501,11 @@ export default function ChatPage() {
         </div>
       </main>
       {selectedCitation && (
-        <Suspense fallback={<aside className="w-80 shrink-0 border-l border-slate-200 bg-slate-50" />}>
+        <Suspense
+          fallback={
+            <aside className="fixed inset-0 z-40 w-full border-l border-slate-200 bg-slate-50 md:static md:inset-auto md:z-auto md:w-80 md:shrink-0" />
+          }
+        >
           <SourcePanel citation={selectedCitation} onClose={closeSourcePanel} />
         </Suspense>
       )}
