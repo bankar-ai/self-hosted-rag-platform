@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import CopyButton from "../components/CopyButton";
 import Sidebar, { type SidebarConversation, type SidebarDocument } from "../components/Sidebar";
 import SourcePanel from "../components/SourcePanel";
 import { apiFetch } from "../lib/apiClient";
@@ -53,6 +54,13 @@ function formatCitation(citation: Citation): string {
       ? `p. ${citation.page_start}`
       : `p. ${citation.page_start}-${citation.page_end}`;
   return `${citation.source_filename}, ${pages}`;
+}
+
+function buildTranscriptText(messages: { role: string; content: string }[]): string {
+  return messages
+    .filter((m) => m.role !== "error")
+    .map((m) => `${m.role === "user" ? "You" : "Assistant"}: ${m.content}`)
+    .join("\n\n");
 }
 
 function TypingIndicator() {
@@ -316,6 +324,15 @@ export default function ChatPage() {
               Ask a question about one of your uploaded documents to get started.
             </p>
           )}
+          {messages.length > 0 && (
+            <div className="mx-auto mb-2 flex max-w-2xl justify-end">
+              <CopyButton
+                getText={() => buildTranscriptText(messages)}
+                label="Copy conversation"
+                className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              />
+            </div>
+          )}
           <div className="mx-auto flex max-w-2xl flex-col gap-3">
             {messages.map((message, index) => {
               const isLast = index === messages.length - 1;
@@ -355,30 +372,39 @@ export default function ChatPage() {
                       ))}
                     </ul>
                   )}
-                  {message.role === "assistant" && message.id && !isPendingAssistant && (
+                  {message.role === "assistant" && !isPendingAssistant && message.content && (
                     <div className="mt-2 flex items-center gap-1 border-t border-slate-200 pt-2">
-                      <button
-                        className={`rounded px-1.5 py-0.5 text-xs ${
-                          message.feedback === "up"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "text-slate-400 hover:bg-slate-200"
-                        }`}
-                        title="Good answer"
-                        onClick={() => void setMessageFeedback(message.id!, "up")}
-                      >
-                        👍
-                      </button>
-                      <button
-                        className={`rounded px-1.5 py-0.5 text-xs ${
-                          message.feedback === "down"
-                            ? "bg-red-100 text-red-700"
-                            : "text-slate-400 hover:bg-slate-200"
-                        }`}
-                        title="Bad answer"
-                        onClick={() => void setMessageFeedback(message.id!, "down")}
-                      >
-                        👎
-                      </button>
+                      <CopyButton
+                        getText={() => message.content}
+                        label="Copy"
+                        className="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-200"
+                      />
+                      {message.id && (
+                        <>
+                          <button
+                            className={`rounded px-1.5 py-0.5 text-xs ${
+                              message.feedback === "up"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "text-slate-400 hover:bg-slate-200"
+                            }`}
+                            title="Good answer"
+                            onClick={() => void setMessageFeedback(message.id!, "up")}
+                          >
+                            👍
+                          </button>
+                          <button
+                            className={`rounded px-1.5 py-0.5 text-xs ${
+                              message.feedback === "down"
+                                ? "bg-red-100 text-red-700"
+                                : "text-slate-400 hover:bg-slate-200"
+                            }`}
+                            title="Bad answer"
+                            onClick={() => void setMessageFeedback(message.id!, "down")}
+                          >
+                            👎
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

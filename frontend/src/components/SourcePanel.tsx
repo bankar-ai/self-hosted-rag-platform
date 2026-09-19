@@ -4,6 +4,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { apiFetch } from "../lib/apiClient";
 import type { ChunkDetail, Citation } from "../lib/types";
+import CopyButton from "./CopyButton";
 
 interface SourcePanelProps {
   citation: Citation | null;
@@ -76,13 +77,22 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
     <aside className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-slate-50 p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Source</p>
-        <button
-          className="rounded-md px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
-          onClick={onClose}
-          aria-label="Close source panel"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          {state.status === "loaded" && (
+            <CopyButton
+              getText={() => state.text}
+              label="Copy"
+              className="rounded-md px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+            />
+          )}
+          <button
+            className="rounded-md px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+            onClick={onClose}
+            aria-label="Close source panel"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       <p className="text-sm font-medium text-slate-900">{citation.source_filename}</p>
