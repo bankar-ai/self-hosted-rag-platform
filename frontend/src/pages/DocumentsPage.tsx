@@ -72,11 +72,22 @@ export default function DocumentsPage() {
     setInProgress(store.list().filter((d) => d.status !== "done"));
   }
 
-  async function dismissInProgress(jobId: string): Promise<void> {
-    await apiFetch(`/ingestion/jobs/${jobId}`, { method: "DELETE" }).catch(() => null);
+  // Local-only cleanup: removes a job from the local documentsStore/`inProgress` state without
+  // touching the backend. Safe to call when a retry is starting, since the retried job (see
+  // `retry_job` in app/ingestion/jobs.py) deliberately reuses the SAME `pdf_path` as the
+  // original -- the backend DELETE below unlinks that shared file, so it must never fire as a
+  // side effect of retrying (Finding 1).
+  function clearInProgressLocally(jobId: string): void {
     const store = getDocumentsStore(scopedUserId);
     store.remove(jobId);
     setInProgress(store.list().filter((d) => d.status !== "done"));
+  }
+
+  // Full dismiss: the user is walking away from this job entirely, so it's safe to delete the
+  // job's uploaded file server-side too. Only ever wire this to an explicit "Dismiss" click.
+  async function dismissInProgress(jobId: string): Promise<void> {
+    await apiFetch(`/ingestion/jobs/${jobId}`, { method: "DELETE" }).catch(() => null);
+    clearInProgressLocally(jobId);
   }
 
   async function pollJob(jobId: string, filename: string): Promise<void> {
@@ -139,6 +150,12 @@ export default function DocumentsPage() {
     void uploadOne(upload.file, uploadId);
   }
 
+  // Purely client-side: a failed upload transfer never created a backend job, so there's
+  // nothing to clean up server-side -- just drop it from local state.
+  function removeFailedUpload(uploadId: string): void {
+    setUploadsInFlight((prev) => prev.filter((u) => u.id !== uploadId));
+  }
+
   async function handleFiles(files: File[]): Promise<void> {
     await Promise.all(files.map((file) => uploadOne(file)));
   }
@@ -195,11 +212,23 @@ export default function DocumentsPage() {
     if (!confirmed) return;
 
     setDeletingIds((prev) => new Set([...prev, ...documentIds]));
-    await Promise.all(documentIds.map((id) => apiFetch(`/documents/${id}`, { method: "DELETE" })));
-    setServerDocuments((prev) => prev.filter((doc) => !documentIds.includes(doc.document_id)));
+    // Each delete is caught individually so a network-level rejection on one document can never
+    // stop `Promise.all` from resolving -- otherwise the cleanup below would never run, leaving
+    // every attempted row stuck on "Deleting..." forever (Finding 3). A caught failure is treated
+    // the same as a non-ok response: the id is left in place instead of removed (Finding 2).
+    const results = await Promise.all(
+      documentIds.map(async (id) => {
+        const ok = await apiFetch(`/documents/${id}`, { method: "DELETE" })
+          .then((response) => response.ok)
+          .catch(() => false);
+        return { id, ok };
+      })
+    );
+    const succeededIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
+    setServerDocuments((prev) => prev.filter((doc) => !succeededIds.has(doc.document_id)));
     setSelectedDocumentIds((prev) => {
       const next = new Set(prev);
-      documentIds.forEach((id) => next.delete(id));
+      succeededIds.forEach((id) => next.delete(id));
       return next;
     });
     setDeletingIds((prev) => {
@@ -236,7 +265,7 @@ export default function DocumentsPage() {
     if (!response.ok) return;
 
     const { job_id: newJobId } = (await response.json()) as { job_id: string };
-    await dismissInProgress(jobId);
+    clearInProgressLocally(jobId);
     updateInProgress({ id: newJobId, title: filename, lastUpdated: Date.now(), status: "pending" });
     void pollJob(newJobId, filename);
   }
@@ -317,9 +346,19 @@ export default function DocumentsPage() {
               {upload.status === "failed" ? (
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-red-600">Upload failed.</p>
-                  <Button variant="outline" onClick={() => retryUpload(upload.id)}>
-                    Try again
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => retryUpload(upload.id)}>
+                      Try again
+                    </Button>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs text-slate-400 hover:text-slate-700"
+                      onClick={() => removeFailedUpload(upload.id)}
+                      aria-label={`Remove ${upload.file.name} from uploads`}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">

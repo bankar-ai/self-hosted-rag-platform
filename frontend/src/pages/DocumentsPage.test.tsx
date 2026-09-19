@@ -263,4 +263,109 @@ describe("DocumentsPage", () => {
 
     await waitFor(() => expect(deleteJobCalled).toBe(true));
   });
+
+  it("does not call the delete-job endpoint when retrying a failed job (Finding 1 regression guard)", async () => {
+    let deleteJobCalled = false;
+    let retryCalled = false;
+    stubAuthAndEmptyDocuments((url, init) => {
+      if (url.includes("/ingestion/jobs/job-x") && init?.method === "DELETE") {
+        deleteJobCalled = true;
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/ingestion/jobs/job-x/retry") && init?.method === "POST") {
+        retryCalled = true;
+        return new Response(JSON.stringify({ job_id: "job-x-2" }), { status: 200 });
+      }
+      if (url.includes("/ingestion/jobs/job-x-2")) {
+        // Keep the retried job pending so the test doesn't race a poll-driven cleanup.
+        return new Response(JSON.stringify({ status: "pending" }), { status: 200 });
+      }
+      if (url.includes("/ingestion/jobs/job-x")) {
+        return new Response(JSON.stringify({ status: "failed", error: "boom" }), { status: 200 });
+      }
+      return null;
+    });
+    vi.spyOn(apiClient, "uploadWithProgress").mockResolvedValue({
+      ok: true,
+      status: 202,
+      body: { job_id: "job-x" },
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText(/no documents uploaded yet/i));
+
+    const file = new File(["%PDF-1.4"], "broken.pdf", { type: "application/pdf" });
+    const input = screen.getByLabelText(/choose pdf files/i) as HTMLInputElement;
+    await userEvent.upload(input, file);
+    await userEvent.click(screen.getByRole("button", { name: /upload 1 file/i }));
+
+    await waitFor(() => expect(screen.getByText(/failed/i)).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+
+    await waitFor(() => expect(retryCalled).toBe(true));
+    // Give any accidental DELETE call a chance to fire before asserting it never did.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(deleteJobCalled).toBe(false);
+  });
+
+  it("keeps a document visible and its Delete button enabled when the delete request fails", async () => {
+    stubAuthAndEmptyDocuments((url, init) => {
+      if (url.includes("/documents/") && init?.method === "DELETE") {
+        return new Response(JSON.stringify({ detail: "forbidden" }), { status: 403 });
+      }
+      if (url.endsWith("/documents")) {
+        return new Response(
+          JSON.stringify({
+            documents: [{ document_id: "d1", filename: "existing.pdf", created_at: "2026-01-01T00:00:00Z" }],
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText("existing.pdf"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Delete" })).not.toBeDisabled()
+    );
+    expect(screen.getByText("existing.pdf")).toBeInTheDocument();
+  });
+
+  it("shows a dismiss button on a failed upload-transfer entry that removes it from the list", async () => {
+    stubAuthAndEmptyDocuments();
+    vi.spyOn(apiClient, "uploadWithProgress").mockRejectedValue(new Error("network down"));
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText(/no documents uploaded yet/i));
+
+    const file = new File(["%PDF-1.4"], "gone.pdf", { type: "application/pdf" });
+    const input = screen.getByLabelText(/choose pdf files/i) as HTMLInputElement;
+    await userEvent.upload(input, file);
+    await userEvent.click(screen.getByRole("button", { name: /upload 1 file/i }));
+
+    await waitFor(() => expect(screen.getByText(/upload failed/i)).toBeInTheDocument());
+
+    await userEvent.click(screen.getByLabelText(/remove gone\.pdf from uploads/i));
+
+    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("gone.pdf")).not.toBeInTheDocument();
+  });
 });
