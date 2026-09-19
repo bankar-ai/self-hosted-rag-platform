@@ -350,3 +350,56 @@ def test_upload_pdf_rejects_oversized_file(monkeypatch, auth_headers):
         assert response.status_code == 413
     finally:
         get_settings.cache_clear()
+
+
+def test_get_chunk_returns_text_and_metadata(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+    chunk_id = final["result"]["chunks"][0]["chunk_id"]
+
+    response = client.get(f"/documents/{document_id}/chunks/{chunk_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["chunk_id"] == chunk_id
+    assert body["document_id"] == document_id
+    assert body["text"] == final["result"]["chunks"][0]["text"]
+    assert body["source_filename"] == "simple.pdf"
+
+
+def test_get_chunk_404_for_unknown_chunk(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+
+    response = client.get(f"/documents/{document_id}/chunks/does-not-exist", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_get_chunk_404_for_chunk_belonging_to_another_user(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+    chunk_id = final["result"]["chunks"][0]["chunk_id"]
+
+    other_user_headers = register_and_login(client, "ingestion-chunk-detail-other-owner")
+    response = client.get(
+        f"/documents/{document_id}/chunks/{chunk_id}", headers=other_user_headers
+    )
+    assert response.status_code == 404
