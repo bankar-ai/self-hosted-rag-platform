@@ -31,7 +31,12 @@ function renderTextWithCitations(
           key={`${keyPrefix}-${index}`}
           type="button"
           className="mx-0.5 rounded bg-slate-200 px-1 text-xs font-medium text-slate-700 hover:bg-slate-300"
-          onClick={() => onCitationClick(citation)}
+          onClick={(event) => {
+            // ERP-079: focus the marker explicitly (not guaranteed by a click in every
+            // browser) so the source panel can return focus here when it closes.
+            event.currentTarget.focus();
+            onCitationClick(citation);
+          }}
         >
           {part}
         </button>

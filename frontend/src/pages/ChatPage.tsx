@@ -99,6 +99,20 @@ export default function ChatPage() {
   const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // ERP-079: remembers whichever citation marker/list-item was clicked to open the source
+  // panel, so closing it (Escape, the close button, or picking another citation) can return
+  // focus there instead of dropping it silently.
+  const sourcePanelTriggerRef = useRef<HTMLElement | null>(null);
+
+  function openSourcePanel(citation: Citation): void {
+    sourcePanelTriggerRef.current = document.activeElement as HTMLElement | null;
+    setSelectedCitation(citation);
+  }
+
+  function closeSourcePanel(): void {
+    setSelectedCitation(null);
+    sourcePanelTriggerRef.current?.focus();
+  }
 
   function toggleDocumentSelected(id: string): void {
     setDeselectedDocumentIds((prev) => {
@@ -375,7 +389,7 @@ export default function ChatPage() {
                     <TypingIndicator />
                   ) : (
                     <div className="text-sm">
-                      {renderMarkdownLite(message.content, message.citations ?? [], setSelectedCitation)}
+                      {renderMarkdownLite(message.content, message.citations ?? [], openSourcePanel)}
                     </div>
                   )}
                   {message.role === "user" && (
@@ -400,7 +414,10 @@ export default function ChatPage() {
                           <button
                             type="button"
                             className="text-left hover:text-slate-700 hover:underline"
-                            onClick={() => setSelectedCitation(citation)}
+                            onClick={(event) => {
+                              event.currentTarget.focus();
+                              openSourcePanel(citation);
+                            }}
                           >
                             [{citationIndex + 1}] {formatCitation(citation)}
                           </button>
@@ -471,7 +488,7 @@ export default function ChatPage() {
       </main>
       {selectedCitation && (
         <Suspense fallback={<aside className="w-80 shrink-0 border-l border-slate-200 bg-slate-50" />}>
-          <SourcePanel citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
+          <SourcePanel citation={selectedCitation} onClose={closeSourcePanel} />
         </Suspense>
       )}
     </div>

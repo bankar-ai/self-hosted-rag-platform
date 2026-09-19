@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -35,6 +35,37 @@ const sanitizeSchema = {
 export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
   const [state, setState] = useState<PanelState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);
+  const panelRef = useRef<HTMLElement>(null);
+
+  // ERP-079: move focus into the panel as soon as it opens, so keyboard/screen-reader users
+  // land on it instead of it silently appearing off to the side.
+  useEffect(() => {
+    if (citation) panelRef.current?.focus();
+  }, [citation]);
+
+  // ERP-079: Escape closes the panel; Tab/Shift+Tab are trapped among the panel's own
+  // focusable elements so focus can't silently leave into the chat behind it.
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab" || !panelRef.current) return;
+    const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   useEffect(() => {
     if (!citation) return;
@@ -74,7 +105,15 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       : `p. ${citation.page_start}-${citation.page_end}`;
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-slate-50 p-4">
+    <aside
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Source: ${citation.source_filename}`}
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      className="flex w-80 shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 focus:outline-none"
+    >
       <div className="mb-3 flex items-center justify-between">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Source</p>
         <div className="flex items-center gap-1">

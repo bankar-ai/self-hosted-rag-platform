@@ -179,6 +179,59 @@ describe("SourcePanel", () => {
     expect(writeText).toHaveBeenCalledWith("Copy this text.");
   });
 
+  it("has dialog role/aria-label and moves focus into itself on open (ERP-079)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "Some text.",
+            section_path: [],
+            page_start: 1,
+            page_end: 1,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    const dialog = await screen.findByRole("dialog", { name: /simple\.pdf/i });
+    await waitFor(() => expect(dialog).toHaveFocus());
+  });
+
+  it("calls onClose when Escape is pressed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "Some text.",
+            section_path: [],
+            page_start: 1,
+            page_end: 1,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+    const onClose = vi.fn();
+
+    render(<SourcePanel citation={citation} onClose={onClose} />);
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog).toHaveFocus());
+
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("sanitizes a disallowed tag instead of rendering it", async () => {
     vi.stubGlobal(
       "fetch",
