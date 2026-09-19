@@ -403,3 +403,68 @@ def test_get_chunk_404_for_chunk_belonging_to_another_user(simple_text_pdf, auth
         f"/documents/{document_id}/chunks/{chunk_id}", headers=other_user_headers
     )
     assert response.status_code == 404
+
+
+def test_delete_job_removes_a_failed_job(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    failed = _poll_until_done(job_id, auth_headers)
+    assert failed["status"] == "failed"
+
+    response = client.delete(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert response.status_code == 204
+
+    status_response = client.get(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert status_response.status_code == 404
+
+
+def test_delete_job_404_for_unknown_job(auth_headers):
+    response = client.delete("/ingestion/jobs/does-not-exist", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_delete_job_404_for_a_job_that_is_not_failed(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    done = _poll_until_done(job_id, auth_headers)
+    assert done["status"] == "done"
+
+    response = client.delete(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_delete_job_404_for_job_belonging_to_another_user(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    _poll_until_done(job_id, auth_headers)
+
+    other_user_headers = register_and_login(client, "ingestion-delete-job-other-owner")
+    response = client.delete(f"/ingestion/jobs/{job_id}", headers=other_user_headers)
+    assert response.status_code == 404

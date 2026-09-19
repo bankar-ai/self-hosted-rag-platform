@@ -105,6 +105,13 @@ def retry_job(
     return {"job_id": new_job_id}
 
 
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job_endpoint(job_id: str, current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Delete a failed job's record and temp file. 404 if unknown, not owned, or not failed."""
+    if not jobs.delete_job(job_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Failed job not found")
+
+
 @documents_router.get("")
 def list_documents_endpoint(current_user: CurrentUser = Depends(get_current_user)) -> DocumentListResponse:
     """Return the caller's successfully ingested documents, newest first."""

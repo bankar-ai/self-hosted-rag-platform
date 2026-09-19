@@ -120,4 +120,87 @@ describe("SourcePanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /close source panel/i }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("renders markdown formatting instead of literal syntax", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "# Roof Falls\n\n**81%** of deaths occur in construction. <mark>Highlighted</mark> and <u>underlined</u> text.",
+            section_path: [],
+            page_start: 1,
+            page_end: 1,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText("Roof Falls")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Roof Falls" }).tagName).toBe("H1");
+    expect(screen.getByText("81%").tagName).toBe("STRONG");
+    expect(screen.getByText("Highlighted").tagName).toBe("MARK");
+    expect(screen.getByText("underlined").tagName).toBe("U");
+    expect(screen.queryByText(/\*\*/)).toBeNull();
+    expect(screen.queryByText(/<mark>/)).toBeNull();
+  });
+
+  it("copies the loaded chunk's text via the copy button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "Copy this text.",
+            section_path: [],
+            page_start: 1,
+            page_end: 1,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    render(<SourcePanel citation={citation} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Copy this text.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(writeText).toHaveBeenCalledWith("Copy this text.");
+  });
+
+  it("sanitizes a disallowed tag instead of rendering it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "Safe text <script>window.__pwned = true;</script> more text.",
+            section_path: [],
+            page_start: 1,
+            page_end: 1,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(/Safe text/)).toBeInTheDocument());
+    expect(document.querySelector("script")).toBeNull();
+  });
 });

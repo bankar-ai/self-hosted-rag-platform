@@ -125,3 +125,29 @@ def run_ingestion_job(
         Path(pdf_path).parent.rmdir()
     except OSError:
         pass
+
+
+def delete_job(job_id: str, owner_id: uuid.UUID) -> bool:
+    """Delete a FAILED job's record and its retained temp file (ERP-072).
+
+    A failed job's uploaded file is deliberately kept on disk so `retry_job` can reuse it
+    without a re-upload -- but if the caller instead dismisses the job for good, nothing
+    previously cleaned up either the in-memory record or that file, leaking disk space on a
+    resource-constrained deployment. Returns `False` (mapped to `404` by the router) if the
+    job doesn't exist, isn't owned by `owner_id`, or isn't currently `FAILED` -- mirroring
+    `retry_job`'s exact guard, since dismissing only makes sense for the same states retrying
+    would apply to.
+    """
+    with _lock:
+        record = _jobs.get(job_id)
+        if record is None or record.owner_id != owner_id or record.status != JobStatus.FAILED:
+            return False
+        pdf_path = record.pdf_path
+        del _jobs[job_id]
+
+    Path(pdf_path).unlink(missing_ok=True)
+    try:
+        Path(pdf_path).parent.rmdir()
+    except OSError:
+        pass
+    return True
