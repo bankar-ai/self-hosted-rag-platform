@@ -5,7 +5,7 @@ import uuid
 from app.core.db import get_session_factory
 from app.embedding.index import OwnerFaissIndexStore
 from app.ingestion.config import IngestionSettings
-from app.ingestion.jobs import create_job, get_job, retry_job, run_ingestion_job
+from app.ingestion.jobs import create_job, delete_job, get_job, retry_job, run_ingestion_job
 from app.ingestion.models import ChunkRecord
 from app.ingestion.schemas import JobStatus
 
@@ -198,3 +198,37 @@ def test_retry_job_returns_none_for_wrong_owner():
     run_ingestion_job(job_id, "/no/such/file.pdf", "missing.pdf", _settings(), _TEST_OWNER_ID)
 
     assert retry_job(job_id, uuid.uuid4()) is None
+
+
+def test_delete_job_removes_the_job_and_unlinks_its_temp_file(tmp_path):
+    pdf_path = tmp_path / "leftover.pdf"
+    pdf_path.write_bytes(b"not a real pdf")
+    job_id = create_job(_TEST_OWNER_ID, str(pdf_path), "leftover.pdf")
+    run_ingestion_job(job_id, str(pdf_path), "leftover.pdf", _settings(), _TEST_OWNER_ID)
+    assert get_job(job_id).status == JobStatus.FAILED
+    assert pdf_path.exists()
+
+    result = delete_job(job_id, _TEST_OWNER_ID)
+
+    assert result is True
+    assert get_job(job_id) is None
+    assert not pdf_path.exists()
+
+
+def test_delete_job_returns_false_for_unknown_job():
+    assert delete_job("does-not-exist", _TEST_OWNER_ID) is False
+
+
+def test_delete_job_returns_false_for_a_job_that_is_not_failed():
+    job_id = create_job(_TEST_OWNER_ID, "/tmp/unused.pdf", "unused.pdf")
+    assert delete_job(job_id, _TEST_OWNER_ID) is False
+
+
+def test_delete_job_returns_false_for_wrong_owner(tmp_path):
+    pdf_path = tmp_path / "leftover2.pdf"
+    pdf_path.write_bytes(b"not a real pdf")
+    job_id = create_job(_TEST_OWNER_ID, str(pdf_path), "leftover2.pdf")
+    run_ingestion_job(job_id, str(pdf_path), "leftover2.pdf", _settings(), _TEST_OWNER_ID)
+
+    assert delete_job(job_id, uuid.uuid4()) is False
+    assert get_job(job_id).status == JobStatus.FAILED

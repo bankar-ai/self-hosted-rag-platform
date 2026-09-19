@@ -105,10 +105,15 @@ def run_ingestion_job(
         )
     except Exception as exc:  # noqa: BLE001 - job failure is reported via status, not raised
         logger.exception("Ingestion job %s failed for file %r", job_id, filename)
+        error_msg = str(exc)
         with _lock:
             _jobs[job_id].status = JobStatus.FAILED
-            _jobs[job_id].error = str(exc)
+            _jobs[job_id].error = error_msg
         _jobs_counter.add(1, {"status": "failed"})
+        # Force garbage collection to release file handles held by C extensions (e.g. pymupdf).
+        # On Windows, file handles from C extensions may not be released immediately.
+        import gc
+        gc.collect()
         return
 
     with _lock:
@@ -125,3 +130,50 @@ def run_ingestion_job(
         Path(pdf_path).parent.rmdir()
     except OSError:
         pass
+
+
+def delete_job(job_id: str, owner_id: uuid.UUID) -> bool:
+    """Delete a FAILED job's record and its retained temp file (ERP-072).
+
+    A failed job's uploaded file is deliberately kept on disk so `retry_job` can reuse it
+    without a re-upload -- but if the caller instead dismisses the job for good, nothing
+    previously cleaned up either the in-memory record or that file, leaking disk space on a
+    resource-constrained deployment. Returns `False` (mapped to `404` by the router) if the
+    job doesn't exist, isn't owned by `owner_id`, or isn't currently `FAILED` -- mirroring
+    `retry_job`'s exact guard, since dismissing only makes sense for the same states retrying
+    would apply to.
+    """
+    import gc
+    import time
+
+    with _lock:
+        record = _jobs.get(job_id)
+        if record is None or record.owner_id != owner_id or record.status != JobStatus.FAILED:
+            return False
+        pdf_path = record.pdf_path
+        del _jobs[job_id]
+
+    # Force garbage collection multiple times and wait to release lingering file handles
+    # (especially on Windows where PDF parsing libraries may not release them immediately)
+    gc.collect()
+    gc.collect()
+    time.sleep(0.2)
+
+    # Try to delete the file with retries
+    path_obj = Path(pdf_path)
+    for attempt in range(15):
+        try:
+            path_obj.unlink(missing_ok=True)
+            break
+        except OSError:
+            if attempt < 14:
+                # More aggressive GC between attempts
+                gc.collect()
+                time.sleep(0.1 * (attempt + 1))
+            # Final attempt silently fails, file will remain but job record is deleted
+
+    try:
+        Path(pdf_path).parent.rmdir()
+    except OSError:
+        pass
+    return True
