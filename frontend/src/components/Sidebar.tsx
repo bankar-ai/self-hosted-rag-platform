@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import CopyButton from "./CopyButton";
 
 export interface SidebarConversation {
   id: string;
@@ -15,6 +16,10 @@ interface SidebarProps {
   activeConversationId: string;
   onSelectConversation: (id: string) => void;
   onRenameConversation: (conv: SidebarConversation) => void;
+  /** Fetches and formats one conversation's transcript on demand (ERP-075) -- the sidebar only
+   * ever holds an id/title, so copying a row that isn't the currently-open conversation needs
+   * a fetch, unlike the open chat's own "Copy conversation" action. */
+  onCopyTranscript: (id: string) => Promise<string>;
   onNewConversation: () => void;
   documents: SidebarDocument[];
   deselectedDocumentIds: Set<string>;
@@ -28,6 +33,7 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onRenameConversation,
+  onCopyTranscript,
   onNewConversation,
   documents,
   deselectedDocumentIds,
@@ -64,6 +70,12 @@ export default function Sidebar({
               >
                 ✎
               </button>
+              <CopyButton
+                getText={() => onCopyTranscript(conv.id)}
+                label="⧉"
+                title="Copy conversation"
+                className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+              />
             </li>
           ))}
         </ul>

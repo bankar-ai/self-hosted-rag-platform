@@ -63,6 +63,12 @@ function buildTranscriptText(messages: { role: string; content: string }[]): str
     .join("\n\n");
 }
 
+/** One Q&A turn's copy text -- the question plus its paired answer, if one exists yet
+ * (a question still awaiting its answer has nothing to pair with). */
+function buildTurnText(question: string, answer: string | undefined): string {
+  return answer ? `You: ${question}\n\nAssistant: ${answer}` : `You: ${question}`;
+}
+
 function TypingIndicator() {
   return (
     <div className="flex gap-1 px-1 py-1">
@@ -191,6 +197,16 @@ export default function ChatPage() {
     await loadConversationHistory(id);
   }
 
+  /** Fetches and formats a conversation's transcript on demand, for the sidebar's per-row copy
+   * action (ERP-075) -- the sidebar only ever holds an id/title, never the full history, so
+   * unlike the open chat's "Copy conversation" this can't just read from local state. */
+  async function copyConversationTranscript(id: string): Promise<string> {
+    const response = await apiFetch(`/conversations/${id}`);
+    if (!response.ok) return "";
+    const body = (await response.json()) as ConversationHistoryResponse;
+    return buildTranscriptText(body.messages);
+  }
+
   async function renameConversation(id: string, title: string): Promise<void> {
     const response = await apiFetch(`/conversations/${id}`, {
       method: "PATCH",
@@ -312,6 +328,7 @@ export default function ChatPage() {
         activeConversationId={conversationId}
         onSelectConversation={(id) => void selectConversation(id)}
         onRenameConversation={handleRename}
+        onCopyTranscript={copyConversationTranscript}
         onNewConversation={startNewConversation}
         documents={documents}
         deselectedDocumentIds={deselectedDocumentIds}
@@ -355,6 +372,21 @@ export default function ChatPage() {
                   ) : (
                     <div className="text-sm">
                       {renderMarkdownLite(message.content, message.citations ?? [], setSelectedCitation)}
+                    </div>
+                  )}
+                  {message.role === "user" && (
+                    <div className="mt-1 flex justify-end">
+                      <CopyButton
+                        getText={() => {
+                          const next = messages[index + 1];
+                          return buildTurnText(
+                            message.content,
+                            next?.role === "assistant" ? next.content : undefined
+                          );
+                        }}
+                        label="Copy Q&A"
+                        className="rounded px-1.5 py-0.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                      />
                     </div>
                   )}
                   {message.citations && message.citations.length > 0 && (
