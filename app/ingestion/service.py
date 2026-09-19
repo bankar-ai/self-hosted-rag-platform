@@ -19,7 +19,7 @@ from app.ingestion.schemas import (
 def ingest_pdf(pdf_path: str, source_filename: str, settings: IngestionSettings) -> IngestResponse:
     """Parse and chunk a PDF at `pdf_path`, returning provenance-tagged chunks."""
     document_id = str(uuid.uuid4())
-    pages, parser_used = parse_pdf(pdf_path, settings)
+    pages, parser_used, parsing_confidence = parse_pdf(pdf_path, settings)
     raw_chunks = chunk_markdown(pages, settings)
 
     chunks = [
@@ -38,7 +38,9 @@ def ingest_pdf(pdf_path: str, source_filename: str, settings: IngestionSettings)
         for index, raw in enumerate(raw_chunks)
     ]
 
-    return IngestResponse(document_id=document_id, chunks=chunks)
+    return IngestResponse(
+        document_id=document_id, chunks=chunks, parsing_confidence=parsing_confidence
+    )
 
 
 def list_documents(owner_id: uuid.UUID) -> DocumentListResponse:
@@ -55,7 +57,12 @@ def list_documents(owner_id: uuid.UUID) -> DocumentListResponse:
 
     return DocumentListResponse(
         documents=[
-            DocumentSummary(document_id=r.document_id, filename=r.filename, created_at=r.created_at)
+            DocumentSummary(
+                document_id=r.document_id,
+                filename=r.filename,
+                created_at=r.created_at,
+                parsing_confidence=r.parsing_confidence,
+            )
             for r in records
         ]
     )

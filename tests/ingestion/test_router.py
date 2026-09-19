@@ -276,6 +276,9 @@ def test_list_documents_returns_document_after_successful_ingestion(simple_text_
     assert response.status_code == 200
     documents = response.json()["documents"]
     assert any(d["document_id"] == document_id and d["filename"] == "simple.pdf" for d in documents)
+    # ERP-076: a document parsed via the fast path (as this simple-text fixture is) gets "high".
+    matching = next(d for d in documents if d["document_id"] == document_id)
+    assert matching["parsing_confidence"] == "high"
 
 
 def test_list_documents_does_not_include_another_users_documents(simple_text_pdf, auth_headers):

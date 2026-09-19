@@ -100,6 +100,7 @@ def run_ingestion_job(
             source_filename=filename,
             chunks=result.chunks,
             owner_id=owner_id,
+            parsing_confidence=result.parsing_confidence,
             embedding_client=embedding_client,
             faiss_index_store=faiss_index_store,
         )

@@ -171,7 +171,11 @@ export default function ChatPage() {
       if (!response.ok) return;
       const body = (await response.json()) as DocumentListResponse;
       setDocuments(
-        body.documents.map((document) => ({ id: document.document_id, title: document.filename }))
+        body.documents.map((document) => ({
+          id: document.document_id,
+          title: document.filename,
+          parsingConfidence: document.parsing_confidence,
+        }))
       );
     })();
   }, [userId]);

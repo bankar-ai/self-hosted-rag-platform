@@ -61,6 +61,7 @@ export interface DocumentSummary {
   document_id: string;
   filename: string;
   created_at: string;
+  parsing_confidence: string;
 }
 
 export interface DocumentListResponse {

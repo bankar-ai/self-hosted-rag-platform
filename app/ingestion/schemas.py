@@ -23,10 +23,17 @@ class Chunk(BaseModel):
 
 
 class IngestResponse(BaseModel):
-    """The completed result of ingesting one document: its ID and resulting chunks."""
+    """The completed result of ingesting one document: its ID and resulting chunks.
+
+    `parsing_confidence` (ERP-076) is a document-level label -- `"high"` for a document the
+    fast path handled cleanly, or docling's own `"poor"`/`"fair"`/`"good"`/`"excellent"`/
+    `"unspecified"` grade for one that needed the OCR fallback -- so a caller can tell at a
+    glance whether a document (e.g. scanned, blurry, non-English) parsed reliably.
+    """
 
     document_id: str
     chunks: list[Chunk]
+    parsing_confidence: str
 
 
 class DocumentSummary(BaseModel):
@@ -35,6 +42,7 @@ class DocumentSummary(BaseModel):
     document_id: str
     filename: str
     created_at: datetime
+    parsing_confidence: str
 
 
 class DocumentListResponse(BaseModel):

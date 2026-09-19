@@ -131,6 +131,43 @@ describe("DocumentsPage", () => {
     await waitFor(() => expect(uploadSpy).toHaveBeenCalledTimes(2));
   });
 
+  it("shows a parsing-confidence badge for each document (ERP-076)", async () => {
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.endsWith("/documents")) {
+        return new Response(
+          JSON.stringify({
+            documents: [
+              {
+                document_id: "d1",
+                filename: "clean.pdf",
+                created_at: "2026-01-01T00:00:00Z",
+                parsing_confidence: "high",
+              },
+              {
+                document_id: "d2",
+                filename: "scanned.pdf",
+                created_at: "2026-01-01T00:00:00Z",
+                parsing_confidence: "poor",
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText("clean.pdf"));
+
+    expect(screen.getByText("high")).toBeInTheDocument();
+    expect(screen.getByText("poor")).toBeInTheDocument();
+  });
+
   it("shows a confirmation before deleting, and does nothing if declined", async () => {
     stubAuthAndEmptyDocuments((url) => {
       if (url.endsWith("/documents")) {

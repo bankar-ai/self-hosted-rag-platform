@@ -14,6 +14,11 @@ import pymupdf4llm
 from app.ingestion.cloud_run_client import call_docling_service
 from app.ingestion.config import IngestionSettings
 
+# ERP-076: the confidence label for a document that never needed the Docling fallback -- the
+# fast path has no native confidence signal of its own, and a document that parsed cleanly on
+# it needs no extra (costly) Docling call purely to score it.
+FAST_PATH_CONFIDENCE = "high"
+
 
 def parse_fast(pdf_path: str) -> list[dict[str, Any]]:
     """Raw PyMuPDF4LLM page_chunks output — used for both extraction and fallback routing."""
@@ -35,25 +40,32 @@ def needs_fallback(fast_pages: list[dict[str, Any]], ocr_text_threshold: int) ->
     return False
 
 
-def parse_quality(pdf_path: str, settings: IngestionSettings) -> list[dict[str, Any]]:
+def parse_quality(pdf_path: str, settings: IngestionSettings) -> tuple[list[dict[str, Any]], str]:
     """Quality parse (better tables + OCR) via the Cloud Run docling service (ERP-047).
 
-    Returns `{"text", "page_number"}` dicts, same shape as the fast path's normalized output.
+    Returns `(pages, confidence)` -- `pages` are `{"text", "page_number"}` dicts, same shape as
+    the fast path's normalized output; `confidence` is docling's document-level grade (ERP-076).
     """
     return call_docling_service(pdf_path, settings)
 
 
 def parse_pdf(
     pdf_path: str, settings: IngestionSettings
-) -> tuple[list[dict[str, Any]], Literal["fast", "quality"]]:
-    """Parse a PDF, using the fast path unless `needs_fallback` routes to the quality path."""
+) -> tuple[list[dict[str, Any]], Literal["fast", "quality"], str]:
+    """Parse a PDF, using the fast path unless `needs_fallback` routes to the quality path.
+
+    Returns `(pages, parser_used, parsing_confidence)` -- `parsing_confidence` (ERP-076) is
+    `FAST_PATH_CONFIDENCE` for the fast path (which has no native confidence signal of its
+    own) or docling's own document-level grade for the quality path.
+    """
     fast_pages = parse_fast(pdf_path)
 
     if needs_fallback(fast_pages, settings.ocr_text_threshold):
-        return parse_quality(pdf_path, settings), "quality"
+        pages, confidence = parse_quality(pdf_path, settings)
+        return pages, "quality", confidence
 
     normalized = [
         {"text": page["text"], "page_number": page["metadata"]["page_number"]}
         for page in fast_pages
     ]
-    return normalized, "fast"
+    return normalized, "fast", FAST_PATH_CONFIDENCE

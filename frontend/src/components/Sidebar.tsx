@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import ConfidenceBadge from "./ConfidenceBadge";
 import CopyButton from "./CopyButton";
 
 export interface SidebarConversation {
@@ -9,6 +10,7 @@ export interface SidebarConversation {
 export interface SidebarDocument {
   id: string;
   title: string;
+  parsingConfidence: string;
 }
 
 interface SidebarProps {
@@ -133,9 +135,10 @@ export default function Sidebar({
                     checked={isSelected}
                     onChange={() => onToggleDocument(doc.id)}
                   />
-                  <span className="truncate" title={doc.title}>
+                  <span className="min-w-0 truncate" title={doc.title}>
                     {doc.title}
                   </span>
+                  <ConfidenceBadge confidence={doc.parsingConfidence} />
                 </label>
               </li>
             );
