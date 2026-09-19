@@ -68,6 +68,26 @@ def test_append_message_persists_role_and_content():
         assert message.conversation_id == conversation_id
 
 
+def test_append_message_persists_citations_defaulting_to_none():
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        user_message = append_message(session, conversation_id, "user", "hello there")
+        assistant_message = append_message(
+            session,
+            conversation_id,
+            "assistant",
+            "hi [1]",
+            citations=[{"chunk_id": "c1", "document_id": "d1"}],
+        )
+        session.commit()
+
+        assert user_message.citations is None
+        assert assistant_message.citations == [{"chunk_id": "c1", "document_id": "d1"}]
+
+
 def test_get_recent_messages_returns_oldest_first():
     conversation_id = uuid.uuid4()
     session_factory = get_session_factory()

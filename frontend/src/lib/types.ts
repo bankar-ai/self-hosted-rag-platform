@@ -94,6 +94,7 @@ export interface ConversationMessage {
   content: string;
   created_at: string;
   feedback: "up" | "down" | null;
+  citations: Citation[];
 }
 
 export interface ConversationHistoryResponse {

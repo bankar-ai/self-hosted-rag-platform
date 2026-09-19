@@ -205,7 +205,13 @@ def generate(
     with session_factory() as write_session:
         get_or_create_conversation(write_session, conversation_id, owner_id)
         append_message(write_session, conversation_id, "user", query)
-        assistant_record = append_message(write_session, conversation_id, "assistant", answer)
+        assistant_record = append_message(
+            write_session,
+            conversation_id,
+            "assistant",
+            answer,
+            citations=[c.model_dump() for c in citations],
+        )
         write_session.commit()
 
     return GenerationResponse(
@@ -292,6 +298,7 @@ def generate_stream(
             )
             history = [ConversationTurn(role=r.role, content=r.content) for r in history_records]
 
+        citations = []
         if _GREETING_RE.match(query):
             yield "token", {"text": GREETING_ANSWER}
             yield "citations", {"citations": []}
@@ -331,7 +338,13 @@ def generate_stream(
         with session_factory() as write_session:
             get_or_create_conversation(write_session, conversation_id, owner_id)
             append_message(write_session, conversation_id, "user", query)
-            assistant_record = append_message(write_session, conversation_id, "assistant", answer)
+            assistant_record = append_message(
+                write_session,
+                conversation_id,
+                "assistant",
+                answer,
+                citations=[c.model_dump() for c in citations],
+            )
             write_session.commit()
 
         yield "done", {
@@ -365,6 +378,7 @@ def get_conversation_history(
             content=record.content,
             created_at=record.created_at,
             feedback=feedback_by_message_id.get(record.id),
+            citations=[Citation(**c) for c in (record.citations or [])],
         )
         for record in records
     ]

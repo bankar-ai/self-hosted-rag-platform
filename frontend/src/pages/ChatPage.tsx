@@ -207,6 +207,7 @@ export default function ChatPage() {
         role: message.role === "user" ? "user" : "assistant",
         content: message.content,
         feedback: message.feedback,
+        citations: message.citations,
       }))
     );
   }
