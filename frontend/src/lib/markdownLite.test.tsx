@@ -1,5 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import type { Citation } from "./types";
 import { renderMarkdownLite } from "./markdownLite";
 
 describe("renderMarkdownLite", () => {
@@ -48,5 +50,32 @@ describe("renderMarkdownLite", () => {
 
     const item = container.querySelector("li");
     expect(item?.querySelector("strong")?.textContent).toBe("maple21");
+  });
+
+  it("renders a [n] marker as a clickable element when it matches a citation", async () => {
+    const citation: Citation = {
+      chunk_id: "c1",
+      document_id: "d1",
+      section_path: ["Intro"],
+      page_start: 1,
+      page_end: 1,
+      source_filename: "doc.pdf",
+      score: 1,
+      reranked: false,
+    };
+    const onCitationClick = vi.fn();
+    render(<div>{renderMarkdownLite("See the answer [1].", [citation], onCitationClick)}</div>);
+
+    const marker = screen.getByText("[1]");
+    expect(marker.tagName).toBe("BUTTON");
+    await userEvent.click(marker);
+    expect(onCitationClick).toHaveBeenCalledWith(citation);
+  });
+
+  it("renders a [n] marker with no matching citation as plain text", () => {
+    render(<div>{renderMarkdownLite("See [9] for details.", [])}</div>);
+
+    const marker = screen.getByText("[9]");
+    expect(marker.tagName).not.toBe("BUTTON");
   });
 });

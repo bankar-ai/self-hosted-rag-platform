@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import Sidebar, { type SidebarConversation, type SidebarDocument } from "../components/Sidebar";
+import SourcePanel from "../components/SourcePanel";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { renderMarkdownLite } from "../lib/markdownLite";
@@ -18,16 +20,6 @@ interface ChatMessage {
   content: string;
   citations?: Citation[];
   feedback?: "up" | "down" | null;
-}
-
-interface SidebarConversation {
-  id: string;
-  title: string;
-}
-
-interface SidebarDocument {
-  id: string;
-  title: string;
 }
 
 function newConversationId(): string {
@@ -87,6 +79,7 @@ export default function ChatPage() {
   // has explicitly unchecked it, so newly-uploaded documents are selected by default without
   // needing to sync this set whenever the document list refreshes.
   const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
+  const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function toggleDocumentSelected(id: string): void {
@@ -157,6 +150,7 @@ export default function ChatPage() {
   function startNewConversation(): void {
     setConversationId(newConversationId());
     setMessages([]);
+    setSelectedCitation(null);
   }
 
   /**
@@ -185,6 +179,7 @@ export default function ChatPage() {
 
   async function selectConversation(id: string): Promise<void> {
     setConversationId(id);
+    setSelectedCitation(null);
     await loadConversationHistory(id);
   }
 
@@ -304,78 +299,16 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-64 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50 p-4">
-        <Button className="mb-4 w-full" onClick={startNewConversation}>
-          New chat
-        </Button>
-        <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-          Recent conversations
-        </p>
-        {recentConversations.length === 0 ? (
-          <p className="px-1 text-sm text-slate-400">No conversations yet.</p>
-        ) : (
-          <ul className="mb-6 flex flex-col gap-1">
-            {recentConversations.map((conv) => (
-              <li key={conv.id} className="flex items-center gap-1">
-                <button
-                  className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-slate-200 ${
-                    conv.id === conversationId ? "bg-slate-200 font-medium" : "text-slate-700"
-                  }`}
-                  onClick={() => void selectConversation(conv.id)}
-                >
-                  {conv.title}
-                </button>
-                <button
-                  className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
-                  title="Rename conversation"
-                  onClick={() => handleRename(conv)}
-                >
-                  ✎
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-          Your documents
-        </p>
-        {documents.length === 0 ? (
-          <p className="px-1 text-sm text-slate-400">
-            No documents uploaded yet — visit Documents to add one.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-1">
-            {documents.map((doc) => {
-              const isSelected = !deselectedDocumentIds.has(doc.id);
-              return (
-                <li key={doc.id}>
-                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-slate-600 hover:bg-slate-200">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 shrink-0 accent-emerald-600"
-                      checked={isSelected}
-                      onChange={() => toggleDocumentSelected(doc.id)}
-                    />
-                    <span className="truncate" title={doc.title}>
-                      {doc.title}
-                    </span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {documents.length > 0 && (
-          <p className="mt-1 px-2 text-xs text-slate-400">
-            Answers are grounded only in checked documents.
-          </p>
-        )}
-        {documents.length > 0 && deselectedDocumentIds.size === documents.length && (
-          <p className="mt-1 px-2 text-xs text-amber-600">
-            No documents selected — questions won&apos;t find any answers.
-          </p>
-        )}
-      </aside>
+      <Sidebar
+        recentConversations={recentConversations}
+        activeConversationId={conversationId}
+        onSelectConversation={(id) => void selectConversation(id)}
+        onRenameConversation={handleRename}
+        onNewConversation={startNewConversation}
+        documents={documents}
+        deselectedDocumentIds={deselectedDocumentIds}
+        onToggleDocument={toggleDocumentSelected}
+      />
       <main className="flex flex-1 flex-col bg-white">
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {messages.length === 0 && (
@@ -394,7 +327,7 @@ export default function ChatPage() {
                   data-role={message.role}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-slate-900 px-4 py-2 text-white"
+                      ? "ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-brand px-4 py-2 text-white"
                       : message.role === "error"
                         ? "max-w-[80%] rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-red-700"
                         : "max-w-[80%] rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 px-4 py-2 text-slate-900"
@@ -403,21 +336,21 @@ export default function ChatPage() {
                   {isPendingAssistant ? (
                     <TypingIndicator />
                   ) : (
-                    <div className="text-sm">{renderMarkdownLite(message.content)}</div>
+                    <div className="text-sm">
+                      {renderMarkdownLite(message.content, message.citations ?? [], setSelectedCitation)}
+                    </div>
                   )}
                   {message.citations && message.citations.length > 0 && (
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
                       {message.citations.map((citation, citationIndex) => (
                         <li key={citation.chunk_id}>
-                          <details>
-                            <summary className="cursor-pointer">
-                              [{citationIndex + 1}] {formatCitation(citation)}
-                            </summary>
-                            <p className="mt-0.5 pl-3 text-slate-400">
-                              Relevance score: {citation.score.toFixed(3)}
-                              {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
-                            </p>
-                          </details>
+                          <button
+                            type="button"
+                            className="text-left hover:text-slate-700 hover:underline"
+                            onClick={() => setSelectedCitation(citation)}
+                          >
+                            [{citationIndex + 1}] {formatCitation(citation)}
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -474,6 +407,7 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
+      <SourcePanel citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
     </div>
   );
 }

@@ -67,6 +67,16 @@ export interface DocumentListResponse {
   documents: DocumentSummary[];
 }
 
+export interface ChunkDetail {
+  chunk_id: string;
+  document_id: string;
+  text: string;
+  section_path: string[];
+  page_start: number;
+  page_end: number;
+  source_filename: string;
+}
+
 export interface ConversationSummary {
   conversation_id: string;
   created_at: string;

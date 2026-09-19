@@ -43,6 +43,18 @@ class DocumentListResponse(BaseModel):
     documents: list[DocumentSummary]
 
 
+class ChunkDetailResponse(BaseModel):
+    """One chunk's full text and provenance, for the frontend's source panel (ERP-050)."""
+
+    chunk_id: str
+    document_id: str
+    text: str
+    section_path: list[str]
+    page_start: int
+    page_end: int
+    source_filename: str
+
+
 class JobStatus(str, Enum):
     """Lifecycle status of an async ingestion job."""
 
