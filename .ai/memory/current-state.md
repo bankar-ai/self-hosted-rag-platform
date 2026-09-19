@@ -94,6 +94,33 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **ERP-050 (Visual/UX Redesign) is Done, deployed, and live-verified (2026-09-19)**: a caller
+  can now click any citation — the citation list below an answer, or (new) a clickable inline
+  `[n]` marker in the answer text itself — to open a right-hand source panel showing the exact
+  chunk text it came from, via a new owner-scoped `GET /documents/{document_id}/chunks/{chunk_id}`
+  endpoint (chunk text fetched on demand, never embedded in `Citation`). The Chat page is now a
+  three-pane layout (sidebar — extracted into its own `Sidebar` component — / chat / source
+  detail, the third column appearing only when a citation is selected), plus a small cosmetic
+  accent-color pass via a new Tailwind v4 `@theme` block. Deliberately out of scope: PDF
+  storage/viewer (ingestion never persists original PDF bytes), sibling/section-expansion
+  chunks in the panel, a NotebookLM-style "Studio" generated-artifacts pane. Built via
+  subagent-driven development (8 tasks, each independently task-reviewed) plus a final
+  whole-branch review (most capable model) that caught and fixed a real pre-merge bug: a
+  stale-response race in `SourcePanel` where rapidly switching citations could silently show
+  one citation's text under a different citation's header — fixed with a `cancelled`-flag guard
+  and a moved-outside-the-fetch-switch metadata header, both verified by a scoped re-review.
+  Backend 502 → 508 tests passing, ruff/mypy clean; frontend 29 → 36 tests passing,
+  `tsc`/`vite build`/`oxlint` clean. **Live-verified against production**: real document
+  uploaded, a real generation answer's citation resolved correctly through the new endpoint,
+  unknown-chunk and cross-owner requests both 404, and deleting the source document correctly
+  404s its chunk endpoint too (the panel's "no longer available" trigger). Deployed via `git
+  pull` + `systemctl restart` (no migration) and `vercel --prod --scope bankar-ai` (the
+  `--scope` flag was newly required this session — a bare `vercel --prod` returned "Not
+  authorized" despite `vercel whoami` succeeding). Merged to `develop` via PR #49. Deferred
+  follow-ups (not blockers): citation markers inside bold text aren't clickable, no responsive
+  layout for narrow viewports, no keyboard/focus/aria affordances on the panel, and citations
+  don't survive a conversation-history reload (pre-existing gap, made more costly by this
+  feature).
 - **ERP-044 (Document-Scoped Retrieval) is Done, deployed, and live-verified (2026-09-18)**:
   a caller can now scope a retrieval/generation query to a chosen subset of their own documents
   via a new `document_ids` parameter, filtered before RRF fusion on both retrieval legs — true
