@@ -172,3 +172,24 @@ def get_sibling_chunks(
         for row in rows
         if row.section_path == section_path and row.chunk_id not in exclude_chunk_ids
     ]
+
+
+def get_chunk_by_document_and_owner(
+    session: Session, document_id: str, chunk_id: str, owner_id: uuid.UUID
+) -> ChunkRecord | None:
+    """Fetch one chunk by its document and chunk ID, restricted to `owner_id`'s documents.
+
+    Backs the frontend's source panel (ERP-050) -- returns `None` if the chunk doesn't exist,
+    doesn't belong to `document_id`, or the document isn't owned by `owner_id`, one
+    undifferentiated "not found" for all three cases, matching this module's existing
+    cross-owner-access convention.
+    """
+    return session.scalar(
+        select(ChunkRecord)
+        .join(DocumentRecord, ChunkRecord.document_id == DocumentRecord.document_id)
+        .where(
+            ChunkRecord.chunk_id == chunk_id,
+            ChunkRecord.document_id == document_id,
+            DocumentRecord.owner_id == owner_id,
+        )
+    )

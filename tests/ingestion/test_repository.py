@@ -4,6 +4,7 @@ from app.core.db import get_session_factory
 from app.ingestion.models import ChunkRecord, DocumentRecord
 from app.ingestion.repository import (
     delete_document,
+    get_chunk_by_document_and_owner,
     get_chunks_by_vector_ids,
     get_sibling_chunks,
     get_vector_ids_for_documents,
@@ -355,3 +356,50 @@ def test_get_vector_ids_for_documents_empty_input_returns_empty_list():
     session_factory = get_session_factory()
     with session_factory() as session:
         assert get_vector_ids_for_documents(session, _TEST_OWNER_ID, []) == []
+
+
+def test_get_chunk_by_document_and_owner_returns_the_chunk():
+    document_id = "doc-chunk-detail-test"
+    chunks = [_chunk(document_id, 0, text="Alpha lives here.")]
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        save_document_and_chunks(session, document_id, "doc.pdf", chunks, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        chunk = get_chunk_by_document_and_owner(
+            session, document_id, f"{document_id}-0", _TEST_OWNER_ID
+        )
+
+        assert chunk is not None
+        assert chunk.text == "Alpha lives here."
+        assert chunk.document_id == document_id
+
+
+def test_get_chunk_by_document_and_owner_returns_none_for_unknown_chunk():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        chunk = get_chunk_by_document_and_owner(
+            session, "no-such-doc", "no-such-doc-0", _TEST_OWNER_ID
+        )
+        assert chunk is None
+
+
+def test_get_chunk_by_document_and_owner_returns_none_for_another_owners_document():
+    document_id = "doc-chunk-detail-cross-owner-test"
+    chunks = [_chunk(document_id, 0)]
+    other_owner_id = uuid.uuid4()
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        save_document_and_chunks(session, document_id, "doc.pdf", chunks, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        chunk = get_chunk_by_document_and_owner(
+            session, document_id, f"{document_id}-0", other_owner_id
+        )
+        assert chunk is None
