@@ -47,6 +47,13 @@ jobs:
       # it is.
       GENERATION_OLLAMA_HOST: ${{ secrets.CI_MODAL_OLLAMA_URL }}
       EMBEDDING_OLLAMA_HOST: ${{ secrets.CI_MODAL_OLLAMA_URL }}
+      # GenerationSettings.model defaults to "qwen3" (app/generation/config.py), which is not
+      # one of the two models deploy/modal_ollama_ci.py bakes into the CI Modal image
+      # (gemma3:4b + nomic-embed-text, matching production's deploy/modal_ollama.py) -- without
+      # this override, generation fails with a 404 "model not found" the moment it's called.
+      # EMBEDDING_MODEL needs no equivalent override: EmbeddingSettings.model's default is
+      # already "nomic-embed-text".
+      GENERATION_MODEL: gemma3:4b
     steps:
       - uses: actions/checkout@v4
 
