@@ -26,6 +26,15 @@ const sanitizeSchema = {
   tagNames: [...(defaultSchema.tagNames ?? []), "mark", "u"],
 };
 
+// A section heading extracted from a PDF sometimes carries the same markdown/HTML decoration
+// (**bold**, <mark>...</mark>) the chunker's markdown export uses for detected headings --
+// fine for the chunk body (rendered via ReactMarkdown below), but citation.section_path is
+// shown as a plain-text breadcrumb, never markdown-rendered, so that decoration shows up as
+// literal syntax instead of being stripped. Strips just enough to read cleanly as plain text.
+function stripMarkdownDecoration(text: string): string {
+  return text.replace(/\*\*/g, "").replace(/<\/?[a-zA-Z][^>]*>/g, "").trim();
+}
+
 /**
  * Right-hand third pane (ERP-050): shows the exact source text a citation refers to. The
  * chunk's `text` is fetched on demand (not embedded in `Citation`) so every streamed answer
@@ -137,7 +146,9 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       <p className="text-sm font-medium text-slate-900">{citation.source_filename}</p>
       <p className="mb-3 text-xs text-slate-400">
         {pages}
-        {citation.section_path.length > 0 ? ` — ${citation.section_path.join(" / ")}` : ""}
+        {citation.section_path.length > 0
+          ? ` — ${citation.section_path.map(stripMarkdownDecoration).join(" / ")}`
+          : ""}
       </p>
 
       {state.status === "loading" && (

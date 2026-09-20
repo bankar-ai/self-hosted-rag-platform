@@ -10,8 +10,12 @@ import type { Citation } from "./types";
  */
 
 const BOLD_RE = /(\*\*[^*]+\*\*)/g;
-const CITATION_MARKER_RE = /(\[\d+\])/g;
-const CITATION_MARKER_EXACT_RE = /^\[(\d+)\]$/;
+// Matches both "[1]" and a model-bundled "[1, 2, 4]" (ERP-065 taught the backend to tolerate
+// this bundled form when extracting which chunks were cited; this teaches the frontend to
+// render each bundled number as its own clickable marker instead of leaving the whole bundle
+// as inert plain text).
+const CITATION_MARKER_RE = /(\[\d+(?:\s*,\s*\d+)*\])/g;
+const CITATION_MARKER_EXACT_RE = /^\[(\d+(?:\s*,\s*\d+)*)\]$/;
 const BULLET_RE = /^\s*[-*]\s+(.*)$/;
 const NUMBERED_RE = /^\s*\d+\.\s+(.*)$/;
 
@@ -24,25 +28,35 @@ function renderTextWithCitations(
   const parts = text.split(CITATION_MARKER_RE).filter((part) => part.length > 0);
   return parts.map((part, index) => {
     const match = CITATION_MARKER_EXACT_RE.exec(part);
-    const citation = match ? citations[Number(match[1]) - 1] : undefined;
-    if (citation) {
-      return (
-        <button
-          key={`${keyPrefix}-${index}`}
-          type="button"
-          className="mx-0.5 rounded bg-slate-200 px-1 text-xs font-medium text-slate-700 hover:bg-slate-300"
-          onClick={(event) => {
-            // ERP-079: focus the marker explicitly (not guaranteed by a click in every
-            // browser) so the source panel can return focus here when it closes.
-            event.currentTarget.focus();
-            onCitationClick(citation);
-          }}
-        >
-          {part}
-        </button>
-      );
+    if (!match) {
+      return <span key={`${keyPrefix}-${index}`}>{part}</span>;
     }
-    return <span key={`${keyPrefix}-${index}`}>{part}</span>;
+    const numbers = match[1].split(",").map((n) => n.trim());
+    return (
+      <span key={`${keyPrefix}-${index}`}>
+        {numbers.map((number, numberIndex) => {
+          const citation = citations[Number(number) - 1];
+          if (!citation) {
+            return <span key={numberIndex}>{`[${number}]`}</span>;
+          }
+          return (
+            <button
+              key={numberIndex}
+              type="button"
+              className="mx-0.5 rounded bg-slate-200 px-1 text-xs font-medium text-slate-700 hover:bg-slate-300"
+              onClick={(event) => {
+                // ERP-079: focus the marker explicitly (not guaranteed by a click in every
+                // browser) so the source panel can return focus here when it closes.
+                event.currentTarget.focus();
+                onCitationClick(citation);
+              }}
+            >
+              {`[${number}]`}
+            </button>
+          );
+        })}
+      </span>
+    );
   });
 }
 

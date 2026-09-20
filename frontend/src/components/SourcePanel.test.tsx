@@ -232,6 +232,39 @@ describe("SourcePanel", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("strips markdown/HTML decoration from the section_path breadcrumb", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "Some text.",
+            section_path: ["**Prevent Falls**", "<mark>Ladder Falls</mark>"],
+            page_start: 4,
+            page_end: 5,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    render(
+      <SourcePanel
+        citation={{ ...citation, section_path: ["**Prevent Falls**", "<mark>Ladder Falls</mark>"] }}
+        onClose={() => {}}
+      />
+    );
+
+    await waitFor(() => expect(screen.getByText("Some text.")).toBeInTheDocument());
+
+    expect(screen.getByText(/Prevent Falls \/ Ladder Falls/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*/)).toBeNull();
+    expect(screen.queryByText(/<mark>/)).toBeNull();
+  });
+
   it("sanitizes a disallowed tag instead of rendering it", async () => {
     vi.stubGlobal(
       "fetch",

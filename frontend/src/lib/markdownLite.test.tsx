@@ -79,6 +79,34 @@ describe("renderMarkdownLite", () => {
     expect(marker.tagName).not.toBe("BUTTON");
   });
 
+  it("renders a model-bundled [1, 2, 4] marker as separate clickable markers, not one inert block", async () => {
+    const citations: Citation[] = [1, 2, 3, 4].map((n) => ({
+      chunk_id: `c${n}`,
+      document_id: "d1",
+      section_path: [],
+      page_start: 1,
+      page_end: 1,
+      source_filename: "doc.pdf",
+      score: 1,
+      reranked: false,
+    }));
+    const onCitationClick = vi.fn();
+    render(
+      <div>{renderMarkdownLite("Supported by evidence [1, 2, 4].", citations, onCitationClick)}</div>
+    );
+
+    const m1 = screen.getByText("[1]");
+    const m2 = screen.getByText("[2]");
+    const m4 = screen.getByText("[4]");
+    expect(m1.tagName).toBe("BUTTON");
+    expect(m2.tagName).toBe("BUTTON");
+    expect(m4.tagName).toBe("BUTTON");
+    expect(screen.queryByText("[3]")).toBeNull();
+
+    await userEvent.click(m2);
+    expect(onCitationClick).toHaveBeenCalledWith(citations[1]);
+  });
+
   it("renders a [n] marker inside bold text as clickable too (ERP-077)", async () => {
     const citation: Citation = {
       chunk_id: "c1",
