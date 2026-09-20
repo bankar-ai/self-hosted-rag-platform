@@ -94,6 +94,37 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **A second follow-up batch (ERP-075 through ERP-081, plus ERP-083) built and committed to a
+  branch, not yet merged/deployed (2026-09-19)**: closes out the remaining items from the punch
+  list assembled after ERP-050/ERP-067-074 (ERP-082 OIDC self-service linking and DOCX/PPTX
+  ingestion explicitly excluded, per user instruction). **ERP-075** — copy button for a full Q+A
+  turn, and per-row copy on the sidebar's conversation list (fetched on demand). **ERP-081** —
+  `SourcePanel` (react-markdown, ERP-067) is now lazy-loaded; main bundle 581KB → 287KB
+  minified. **ERP-077** — a `[n]` citation marker inside `**bold**` text is now clickable (the
+  bold-rendering branch previously never routed through the citation logic at all). **ERP-079**
+  — `SourcePanel` is a real dialog now (`role="dialog"`, focus trap, Escape-to-close, focus
+  returns to the triggering citation on close). **ERP-078** — sidebar and source panel both
+  become overlays below the `md` breakpoint instead of a fixed three-column layout. **ERP-080**
+  — `conversation_messages` gained a nullable `citations` JSONB column (migration
+  `0e0c25ec1392`); reloaded conversation history now keeps working, clickable citation markers
+  instead of losing them. **ERP-076** — the Cloud Run `docling-service`'s `/parse` response now
+  also returns Docling's own document-level confidence grade (`mean_grade`); new
+  `documents.parsing_confidence` column (migration `4c6edf78ba5c`, backfilled `"high"`),
+  rendered as a badge next to each document in the Documents page and Chat sidebar — lets a
+  caller tell at a glance whether a document (e.g. scanned/blurry) parsed reliably. **ERP-083**
+  — code-complete but **not deployed**: a new isolated CI-only Modal app
+  (`deploy/modal_ollama_ci.py`, deliberately separate from production after production's real
+  2026-09-17 free-credit-threshold incident), `--fail-under-*` flags on both evaluation CLIs, and
+  a new daily-scheduled `evaluation-gate.yml` workflow — but deploying the Modal app, attaching a
+  payment method, and adding the `CI_MODAL_OLLAMA_URL` repo secret are left as manual follow-up
+  (live/billable/credential actions), documented in `D:\github-projects\gcp-deployment-tracker.md`'s
+  new "CI evaluation gate" section. Built in worktree `.claude/worktrees/erp075-083-followups`
+  (branch `worktree-erp075-083-followups`, based on `develop`), one commit per ticket. Verified:
+  ruff/mypy clean, backend 516 → 528 tests passing, frontend 55 → 60 tests passing,
+  `tsc`/`oxlint`/`vite build` clean. **Not yet live-verified in a browser** (no browser-automation
+  tool available this session) and **not yet merged or deployed** — see the session log
+  (`.ai/sessions/2026-09-19-erp075-083-live-feedback-followups.md`) for full details and next
+  steps.
 - **A follow-up batch (ERP-067 through ERP-074) closed out live feedback from ERP-050's own
   first use (2026-09-19)**, deployed and live-verified: **ERP-074** — `Button` gained a
   `variant` prop, fixing invisible Delete/Retry/Dismiss text (a Tailwind cascade-order conflict

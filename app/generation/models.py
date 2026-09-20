@@ -2,9 +2,10 @@
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import ForeignKey, Identity, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -35,6 +36,11 @@ class ConversationMessageRecord(Base):
     role: Mapped[str]
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # ERP-080: the assistant turn's citations, persisted so a reloaded conversation history
+    # still has working citation markers -- previously they existed only transiently in the
+    # live response/stream. Always `None` for a "user"-role message and for any message
+    # persisted before this column existed.
+    citations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, default=None)
 
 
 class MessageFeedbackRecord(Base):

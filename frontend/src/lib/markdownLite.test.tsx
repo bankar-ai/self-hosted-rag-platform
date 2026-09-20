@@ -78,4 +78,27 @@ describe("renderMarkdownLite", () => {
     const marker = screen.getByText("[9]");
     expect(marker.tagName).not.toBe("BUTTON");
   });
+
+  it("renders a [n] marker inside bold text as clickable too (ERP-077)", async () => {
+    const citation: Citation = {
+      chunk_id: "c1",
+      document_id: "d1",
+      section_path: ["Intro"],
+      page_start: 1,
+      page_end: 1,
+      source_filename: "doc.pdf",
+      score: 1,
+      reranked: false,
+    };
+    const onCitationClick = vi.fn();
+    render(
+      <div>{renderMarkdownLite("The answer is **yes [1]**.", [citation], onCitationClick)}</div>
+    );
+
+    const marker = screen.getByText("[1]");
+    expect(marker.tagName).toBe("BUTTON");
+    expect(marker.closest("strong")).not.toBeNull();
+    await userEvent.click(marker);
+    expect(onCitationClick).toHaveBeenCalledWith(citation);
+  });
 });

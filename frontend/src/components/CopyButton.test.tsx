@@ -32,4 +32,16 @@ describe("CopyButton", () => {
 
     expect(writeText).toHaveBeenCalledWith("second");
   });
+
+  it("awaits an async getText before copying (ERP-075: fetched sidebar transcripts)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<CopyButton getText={() => Promise.resolve("fetched text")} label="Copy" />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    expect(writeText).toHaveBeenCalledWith("fetched text");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument());
+  });
 });

@@ -22,6 +22,11 @@ class DocumentRecord(Base):
     filename: Mapped[str]
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # ERP-076: "high" for a document the fast path parsed cleanly (matches
+    # app.ingestion.parsers.FAST_PATH_CONFIDENCE), else docling's own document-level
+    # confidence grade for one that needed the OCR fallback. Backfilled to "high" for any
+    # document ingested before this column existed.
+    parsing_confidence: Mapped[str] = mapped_column(server_default="high")
 
 
 class ChunkRecord(Base):

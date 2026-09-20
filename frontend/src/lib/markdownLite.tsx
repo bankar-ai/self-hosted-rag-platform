@@ -31,7 +31,12 @@ function renderTextWithCitations(
           key={`${keyPrefix}-${index}`}
           type="button"
           className="mx-0.5 rounded bg-slate-200 px-1 text-xs font-medium text-slate-700 hover:bg-slate-300"
-          onClick={() => onCitationClick(citation)}
+          onClick={(event) => {
+            // ERP-079: focus the marker explicitly (not guaranteed by a click in every
+            // browser) so the source panel can return focus here when it closes.
+            event.currentTarget.focus();
+            onCitationClick(citation);
+          }}
         >
           {part}
         </button>
@@ -50,7 +55,18 @@ function renderInline(
   const parts = text.split(BOLD_RE).filter((part) => part.length > 0);
   return parts.map((part, index) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-      return <strong key={`${keyPrefix}-${index}`}>{part.slice(2, -2)}</strong>;
+      const inner = part.slice(2, -2);
+      // Only route through renderTextWithCitations (which wraps every segment in a <span>,
+      // an extra DOM layer) when the bold text actually contains a [n] marker (ERP-077) --
+      // the common case, plain bold text with no marker, stays exactly as before.
+      if (!inner.match(CITATION_MARKER_RE)) {
+        return <strong key={`${keyPrefix}-${index}`}>{inner}</strong>;
+      }
+      return (
+        <strong key={`${keyPrefix}-${index}`}>
+          {renderTextWithCitations(inner, `${keyPrefix}-${index}`, citations, onCitationClick)}
+        </strong>
+      );
     }
     return (
       <span key={`${keyPrefix}-${index}`}>

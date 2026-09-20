@@ -17,12 +17,20 @@ def save_document_and_chunks(
     source_filename: str,
     chunks: list[Chunk],
     owner_id: uuid.UUID,
+    parsing_confidence: str = "high",
 ) -> list[ChunkRecord]:
     """Persist one document and its chunks in `session`, flushing so `vector_id`s are assigned.
 
     Does not commit — the caller controls the transaction boundary.
     """
-    session.add(DocumentRecord(document_id=document_id, filename=source_filename, owner_id=owner_id))
+    session.add(
+        DocumentRecord(
+            document_id=document_id,
+            filename=source_filename,
+            owner_id=owner_id,
+            parsing_confidence=parsing_confidence,
+        )
+    )
     session.flush()
 
     records = [

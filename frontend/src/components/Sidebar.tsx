@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui/button";
+import ConfidenceBadge from "./ConfidenceBadge";
+import CopyButton from "./CopyButton";
 
 export interface SidebarConversation {
   id: string;
@@ -8,6 +10,7 @@ export interface SidebarConversation {
 export interface SidebarDocument {
   id: string;
   title: string;
+  parsingConfidence: string;
 }
 
 interface SidebarProps {
@@ -15,10 +18,18 @@ interface SidebarProps {
   activeConversationId: string;
   onSelectConversation: (id: string) => void;
   onRenameConversation: (conv: SidebarConversation) => void;
+  /** Fetches and formats one conversation's transcript on demand (ERP-075) -- the sidebar only
+   * ever holds an id/title, so copying a row that isn't the currently-open conversation needs
+   * a fetch, unlike the open chat's own "Copy conversation" action. */
+  onCopyTranscript: (id: string) => Promise<string>;
   onNewConversation: () => void;
   documents: SidebarDocument[];
   deselectedDocumentIds: Set<string>;
   onToggleDocument: (id: string) => void;
+  /** ERP-078: below the `md` breakpoint the sidebar becomes a slide-in overlay instead of a
+   * static column, since a fixed 64/80/rest three-column layout doesn't fit a narrow viewport. */
+  isOpenOnMobile: boolean;
+  onCloseMobile: () => void;
 }
 
 /** Recent conversations + documents-with-checkboxes (ERP-044); the left pane of the chat's
@@ -28,16 +39,43 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onRenameConversation,
+  onCopyTranscript,
   onNewConversation,
   documents,
   deselectedDocumentIds,
   onToggleDocument,
+  isOpenOnMobile,
+  onCloseMobile,
 }: SidebarProps) {
   return (
-    <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50 p-4">
-      <Button className="mb-4 w-full" onClick={onNewConversation}>
-        New chat
-      </Button>
+    <>
+      {isOpenOnMobile && (
+        <div
+          className="fixed inset-0 z-20 bg-black/30 md:hidden"
+          onClick={onCloseMobile}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`${isOpenOnMobile ? "flex" : "hidden"} fixed inset-y-0 left-0 z-30 w-64 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50 p-4 md:static md:z-auto md:flex`}
+      >
+        <button
+          type="button"
+          className="mb-2 self-end rounded-md px-2 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700 md:hidden"
+          onClick={onCloseMobile}
+          aria-label="Close sidebar"
+        >
+          ✕
+        </button>
+        <Button
+          className="mb-4 w-full"
+          onClick={() => {
+            onNewConversation();
+            onCloseMobile();
+          }}
+        >
+          New chat
+        </Button>
       <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
         Recent conversations
       </p>
@@ -53,7 +91,10 @@ export default function Sidebar({
                     ? "bg-brand/10 font-medium text-brand-dark"
                     : "text-slate-700"
                 }`}
-                onClick={() => onSelectConversation(conv.id)}
+                onClick={() => {
+                  onSelectConversation(conv.id);
+                  onCloseMobile();
+                }}
               >
                 {conv.title}
               </button>
@@ -64,6 +105,12 @@ export default function Sidebar({
               >
                 ✎
               </button>
+              <CopyButton
+                getText={() => onCopyTranscript(conv.id)}
+                label="⧉"
+                title="Copy conversation"
+                className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+              />
             </li>
           ))}
         </ul>
@@ -88,9 +135,10 @@ export default function Sidebar({
                     checked={isSelected}
                     onChange={() => onToggleDocument(doc.id)}
                   />
-                  <span className="truncate" title={doc.title}>
+                  <span className="min-w-0 truncate" title={doc.title}>
                     {doc.title}
                   </span>
+                  <ConfidenceBadge confidence={doc.parsingConfidence} />
                 </label>
               </li>
             );
@@ -107,6 +155,7 @@ export default function Sidebar({
           No documents selected — questions won&apos;t find any answers.
         </p>
       )}
-    </aside>
+      </aside>
+    </>
   );
 }

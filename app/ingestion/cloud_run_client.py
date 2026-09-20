@@ -40,8 +40,14 @@ def fetch_identity_token(audience: str) -> str:
         return response.text
 
 
-def call_docling_service(pdf_path: str, settings: IngestionSettings) -> list[dict[str, Any]]:
-    """Send the PDF at `pdf_path` to the Cloud Run docling service, returning its parsed pages.
+def call_docling_service(
+    pdf_path: str, settings: IngestionSettings
+) -> tuple[list[dict[str, Any]], str]:
+    """Send the PDF at `pdf_path` to the Cloud Run docling service, returning `(pages, confidence)`.
+
+    `confidence` (ERP-076) is docling's own document-level `mean_grade` ("poor"/"fair"/"good"/
+    "excellent"/"unspecified") -- an aggregate across the whole document, not a per-page
+    breakdown.
 
     Raises `DoclingServiceError` if `settings.docling_service_url` isn't configured, the request
     times out, or the service returns a non-2xx response.
@@ -59,8 +65,8 @@ def call_docling_service(pdf_path: str, settings: IngestionSettings) -> list[dic
                 headers={"Authorization": f"Bearer {token}"},
             )
             response.raise_for_status()
-            result: list[dict[str, Any]] = response.json()
-            return result
+            result: dict[str, Any] = response.json()
+            return result["pages"], result["confidence"]
     except httpx.HTTPError as exc:
         logger.exception("Docling Cloud Run service call failed")
         raise DoclingServiceError(str(exc)) from exc

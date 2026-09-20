@@ -82,6 +82,7 @@ def test_message_round_trip():
         "content": "hello",
         "created_at": now,
         "feedback": None,
+        "citations": [],
     }
 
 

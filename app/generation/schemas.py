@@ -84,7 +84,9 @@ class Message(BaseModel):
 
     `id` and `feedback` (ERP-045) let the caller show/set a thumbs up/down rating -- `feedback`
     is `None` both when the message has never been rated and (always) for a `"user"`-role
-    message, which can't be rated at all.
+    message, which can't be rated at all. `citations` (ERP-080) is likewise always `[]` for a
+    `"user"`-role message and for any message persisted before this field existed --  it lets
+    a reloaded conversation's assistant messages keep working, clickable citation markers.
     """
 
     id: uuid.UUID
@@ -92,6 +94,7 @@ class Message(BaseModel):
     content: str
     created_at: datetime
     feedback: Literal["up", "down"] | None = None
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ConversationHistoryResponse(BaseModel):

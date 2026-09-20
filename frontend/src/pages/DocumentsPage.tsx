@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import ConfidenceBadge from "../components/ConfidenceBadge";
 import { apiFetch, uploadWithProgress } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { getDocumentsStore, type RecentDocument } from "../lib/documentsStore";
@@ -453,6 +454,7 @@ export default function DocumentsPage() {
                     onChange={() => toggleDocumentSelection(doc.document_id)}
                   />
                   <span className="truncate font-medium text-slate-900">{doc.filename}</span>
+                  <ConfidenceBadge confidence={doc.parsing_confidence} />
                 </label>
                 <Button
                   variant="danger"

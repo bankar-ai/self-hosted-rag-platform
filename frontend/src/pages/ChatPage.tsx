@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CopyButton from "../components/CopyButton";
 import Sidebar, { type SidebarConversation, type SidebarDocument } from "../components/Sidebar";
-import SourcePanel from "../components/SourcePanel";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { renderMarkdownLite } from "../lib/markdownLite";
@@ -22,6 +21,11 @@ interface ChatMessage {
   citations?: Citation[];
   feedback?: "up" | "down" | null;
 }
+
+// ERP-081: SourcePanel pulls in react-markdown/rehype-raw/rehype-sanitize (ERP-067), which
+// nearly doubled the bundle -- it's only ever needed once a citation is clicked, so it's
+// split into its own chunk rather than loaded on every page visit.
+const SourcePanel = lazy(() => import("../components/SourcePanel"));
 
 function newConversationId(): string {
   return crypto.randomUUID();
@@ -63,6 +67,12 @@ function buildTranscriptText(messages: { role: string; content: string }[]): str
     .join("\n\n");
 }
 
+/** One Q&A turn's copy text -- the question plus its paired answer, if one exists yet
+ * (a question still awaiting its answer has nothing to pair with). */
+function buildTurnText(question: string, answer: string | undefined): string {
+  return answer ? `You: ${question}\n\nAssistant: ${answer}` : `You: ${question}`;
+}
+
 function TypingIndicator() {
   return (
     <div className="flex gap-1 px-1 py-1">
@@ -88,7 +98,23 @@ export default function ChatPage() {
   // needing to sync this set whenever the document list refreshes.
   const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  // ERP-078: the sidebar collapses into a toggleable overlay below the `md` breakpoint.
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // ERP-079: remembers whichever citation marker/list-item was clicked to open the source
+  // panel, so closing it (Escape, the close button, or picking another citation) can return
+  // focus there instead of dropping it silently.
+  const sourcePanelTriggerRef = useRef<HTMLElement | null>(null);
+
+  function openSourcePanel(citation: Citation): void {
+    sourcePanelTriggerRef.current = document.activeElement as HTMLElement | null;
+    setSelectedCitation(citation);
+  }
+
+  function closeSourcePanel(): void {
+    setSelectedCitation(null);
+    sourcePanelTriggerRef.current?.focus();
+  }
 
   function toggleDocumentSelected(id: string): void {
     setDeselectedDocumentIds((prev) => {
@@ -145,7 +171,11 @@ export default function ChatPage() {
       if (!response.ok) return;
       const body = (await response.json()) as DocumentListResponse;
       setDocuments(
-        body.documents.map((document) => ({ id: document.document_id, title: document.filename }))
+        body.documents.map((document) => ({
+          id: document.document_id,
+          title: document.filename,
+          parsingConfidence: document.parsing_confidence,
+        }))
       );
     })();
   }, [userId]);
@@ -181,6 +211,7 @@ export default function ChatPage() {
         role: message.role === "user" ? "user" : "assistant",
         content: message.content,
         feedback: message.feedback,
+        citations: message.citations,
       }))
     );
   }
@@ -189,6 +220,16 @@ export default function ChatPage() {
     setConversationId(id);
     setSelectedCitation(null);
     await loadConversationHistory(id);
+  }
+
+  /** Fetches and formats a conversation's transcript on demand, for the sidebar's per-row copy
+   * action (ERP-075) -- the sidebar only ever holds an id/title, never the full history, so
+   * unlike the open chat's "Copy conversation" this can't just read from local state. */
+  async function copyConversationTranscript(id: string): Promise<string> {
+    const response = await apiFetch(`/conversations/${id}`);
+    if (!response.ok) return "";
+    const body = (await response.json()) as ConversationHistoryResponse;
+    return buildTranscriptText(body.messages);
   }
 
   async function renameConversation(id: string, title: string): Promise<void> {
@@ -312,12 +353,25 @@ export default function ChatPage() {
         activeConversationId={conversationId}
         onSelectConversation={(id) => void selectConversation(id)}
         onRenameConversation={handleRename}
+        onCopyTranscript={copyConversationTranscript}
         onNewConversation={startNewConversation}
         documents={documents}
         deselectedDocumentIds={deselectedDocumentIds}
         onToggleDocument={toggleDocumentSelected}
+        isOpenOnMobile={isSidebarOpen}
+        onCloseMobile={() => setIsSidebarOpen(false)}
       />
-      <main className="flex flex-1 flex-col bg-white">
+      <main className="flex min-w-0 flex-1 flex-col bg-white">
+        <div className="border-b border-slate-200 px-4 py-2 md:hidden">
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            ☰ Menu
+          </button>
+        </div>
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {messages.length === 0 && (
             <p className="mt-12 text-center text-sm text-slate-400">
@@ -354,7 +408,22 @@ export default function ChatPage() {
                     <TypingIndicator />
                   ) : (
                     <div className="text-sm">
-                      {renderMarkdownLite(message.content, message.citations ?? [], setSelectedCitation)}
+                      {renderMarkdownLite(message.content, message.citations ?? [], openSourcePanel)}
+                    </div>
+                  )}
+                  {message.role === "user" && (
+                    <div className="mt-1 flex justify-end">
+                      <CopyButton
+                        getText={() => {
+                          const next = messages[index + 1];
+                          return buildTurnText(
+                            message.content,
+                            next?.role === "assistant" ? next.content : undefined
+                          );
+                        }}
+                        label="Copy Q&A"
+                        className="rounded px-1.5 py-0.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                      />
                     </div>
                   )}
                   {message.citations && message.citations.length > 0 && (
@@ -364,7 +433,10 @@ export default function ChatPage() {
                           <button
                             type="button"
                             className="text-left hover:text-slate-700 hover:underline"
-                            onClick={() => setSelectedCitation(citation)}
+                            onClick={(event) => {
+                              event.currentTarget.focus();
+                              openSourcePanel(citation);
+                            }}
                           >
                             [{citationIndex + 1}] {formatCitation(citation)}
                           </button>
@@ -433,7 +505,15 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
-      <SourcePanel citation={selectedCitation} onClose={() => setSelectedCitation(null)} />
+      {selectedCitation && (
+        <Suspense
+          fallback={
+            <aside className="fixed inset-0 z-40 w-full border-l border-slate-200 bg-slate-50 md:static md:inset-auto md:z-auto md:w-80 md:shrink-0" />
+          }
+        >
+          <SourcePanel citation={selectedCitation} onClose={closeSourcePanel} />
+        </Suspense>
+      )}
     </div>
   );
 }

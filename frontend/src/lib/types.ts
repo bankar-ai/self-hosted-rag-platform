@@ -61,6 +61,7 @@ export interface DocumentSummary {
   document_id: string;
   filename: string;
   created_at: string;
+  parsing_confidence: string;
 }
 
 export interface DocumentListResponse {
@@ -94,6 +95,7 @@ export interface ConversationMessage {
   content: string;
   created_at: string;
   feedback: "up" | "down" | null;
+  citations: Citation[];
 }
 
 export interface ConversationHistoryResponse {

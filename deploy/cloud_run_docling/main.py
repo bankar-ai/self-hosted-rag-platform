@@ -35,8 +35,14 @@ app = FastAPI(title="docling parsing service")
 
 
 @app.post("/parse")
-async def parse(file: UploadFile) -> list[dict[str, Any]]:
-    """Parse an uploaded PDF with docling, returning `{"text", "page_number"}` per page."""
+async def parse(file: UploadFile) -> dict[str, Any]:
+    """Parse an uploaded PDF with docling, returning its pages plus a document-level confidence grade.
+
+    ERP-076: `{"pages": [{"text", "page_number"}, ...], "confidence": "poor"|"fair"|"good"|
+    "excellent"|"unspecified"}`. `confidence` is docling's own `mean_grade` -- an aggregate
+    across the whole document, not a per-page breakdown -- so a caller can tell at a glance
+    whether a document (e.g. a scanned, blurry, non-English form) parsed reliably.
+    """
     contents = await file.read()
 
     # `delete=False` + an explicit close before `docling` reopens the path: a file still held
@@ -55,10 +61,11 @@ async def parse(file: UploadFile) -> list[dict[str, Any]]:
         os.unlink(tmp.name)
 
     markdown = result.document.export_to_markdown(page_break_placeholder=_PAGE_BREAK)
-    return [
+    pages = [
         {"text": text, "page_number": index + 1}
         for index, text in enumerate(markdown.split(_PAGE_BREAK))
     ]
+    return {"pages": pages, "confidence": result.confidence.mean_grade.value}
 
 
 @app.get("/health")
