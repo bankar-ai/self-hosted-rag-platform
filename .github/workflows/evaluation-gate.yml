@@ -1,13 +1,13 @@
 name: Evaluation Gate
 
-# ERP-083: a scheduled (not per-PR) regression check for retrieval/generation quality against
-# the golden dataset (ERP-029/ERP-030), run against a Modal Ollama endpoint dedicated to CI --
-# never the production endpoint (see deploy/modal_ollama_ci.py's docstring for why). Scheduled
-# rather than gating every PR to avoid adding GPU cold-start latency to normal development, and
-# to keep usage (and cost) minimal -- `workflow_dispatch` is also available for an on-demand run.
+# ERP-083: an on-demand regression check for retrieval/generation quality against the golden
+# dataset (ERP-029/ERP-030), run against a Modal Ollama endpoint dedicated to CI -- never the
+# production endpoint (see deploy/modal_ollama_ci.py's docstring for why). Manual-only for now
+# (`workflow_dispatch`, via the Actions tab's "Run workflow" button) -- deliberately no
+# `schedule:` trigger, a decision made 2026-09-20 to avoid running (and paying for) a live-LLM
+# evaluation every day when nothing has changed. Revisit adding a `schedule:` (weekly was the
+# leading candidate) once there's a sense of how often this actually needs to run.
 on:
-  schedule:
-    - cron: "0 6 * * *" # 06:00 UTC daily
   workflow_dispatch: {}
 
 jobs:
