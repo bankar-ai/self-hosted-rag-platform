@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import ConfidenceBadge from "../components/ConfidenceBadge";
 import { apiFetch, uploadWithProgress } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { getDocumentsStore, type RecentDocument } from "../lib/documentsStore";
@@ -20,8 +21,9 @@ const IN_PROGRESS_STATUS_STYLES: Record<"pending" | "processing" | "failed", str
 
 interface UploadInFlight {
   id: string;
-  name: string;
+  file: File;
   progress: number;
+  status: "uploading" | "failed";
 }
 
 export default function DocumentsPage() {
@@ -33,11 +35,15 @@ export default function DocumentsPage() {
     userId ? getDocumentsStore(userId).list().filter((doc) => doc.status !== "done") : []
   );
   const [serverDocuments, setServerDocuments] = useState<DocumentSummary[]>([]);
-  // Byte-transfer progress only, for files still being sent -- separate from `inProgress`,
-  // which starts only once the backend has accepted the file and created a job (ERP-054).
+  // Files chosen or dropped but not yet uploaded (ERP-070) -- upload only starts once the
+  // user explicitly clicks "Upload", not on selection/drop.
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  // Byte-transfer progress/failure, for files currently being sent -- separate from
+  // `inProgress`, which starts only once the backend has accepted the file and created a job.
   const [uploadsInFlight, setUploadsInFlight] = useState<UploadInFlight[]>([]);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(new Set());
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,10 +73,22 @@ export default function DocumentsPage() {
     setInProgress(store.list().filter((d) => d.status !== "done"));
   }
 
-  function dismissInProgress(jobId: string): void {
+  // Local-only cleanup: removes a job from the local documentsStore/`inProgress` state without
+  // touching the backend. Safe to call when a retry is starting, since the retried job (see
+  // `retry_job` in app/ingestion/jobs.py) deliberately reuses the SAME `pdf_path` as the
+  // original -- the backend DELETE below unlinks that shared file, so it must never fire as a
+  // side effect of retrying (Finding 1).
+  function clearInProgressLocally(jobId: string): void {
     const store = getDocumentsStore(scopedUserId);
     store.remove(jobId);
     setInProgress(store.list().filter((d) => d.status !== "done"));
+  }
+
+  // Full dismiss: the user is walking away from this job entirely, so it's safe to delete the
+  // job's uploaded file server-side too. Only ever wire this to an explicit "Dismiss" click.
+  async function dismissInProgress(jobId: string): Promise<void> {
+    await apiFetch(`/ingestion/jobs/${jobId}`, { method: "DELETE" }).catch(() => null);
+    clearInProgressLocally(jobId);
   }
 
   async function pollJob(jobId: string, filename: string): Promise<void> {
@@ -101,9 +119,12 @@ export default function DocumentsPage() {
     await refreshServerDocuments();
   }
 
-  async function uploadOne(file: File): Promise<void> {
-    const uploadId = crypto.randomUUID();
-    setUploadsInFlight((prev) => [...prev, { id: uploadId, name: file.name, progress: 0 }]);
+  async function uploadOne(file: File, existingId?: string): Promise<void> {
+    const uploadId = existingId ?? crypto.randomUUID();
+    setUploadsInFlight((prev) => [
+      ...prev.filter((u) => u.id !== uploadId),
+      { id: uploadId, file, progress: 0, status: "uploading" },
+    ]);
 
     const result = await uploadWithProgress("/ingestion/pdf", file, (fraction) => {
       setUploadsInFlight((prev) =>
@@ -111,15 +132,36 @@ export default function DocumentsPage() {
       );
     }).catch(() => null);
 
-    setUploadsInFlight((prev) => prev.filter((u) => u.id !== uploadId));
-    if (!result || !result.ok) return;
+    if (!result || !result.ok) {
+      setUploadsInFlight((prev) =>
+        prev.map((u) => (u.id === uploadId ? { ...u, status: "failed" } : u))
+      );
+      return;
+    }
 
+    setUploadsInFlight((prev) => prev.filter((u) => u.id !== uploadId));
     const { job_id: jobId } = result.body as { job_id: string };
     updateInProgress({ id: jobId, title: file.name, lastUpdated: Date.now(), status: "pending" });
     void pollJob(jobId, file.name);
   }
 
+  function retryUpload(uploadId: string): void {
+    const upload = uploadsInFlight.find((u) => u.id === uploadId);
+    if (!upload) return;
+    void uploadOne(upload.file, uploadId);
+  }
+
+  // Purely client-side: a failed upload transfer never created a backend job, so there's
+  // nothing to clean up server-side -- just drop it from local state.
+  function removeFailedUpload(uploadId: string): void {
+    setUploadsInFlight((prev) => prev.filter((u) => u.id !== uploadId));
+  }
+
   async function handleFiles(files: File[]): Promise<void> {
+    await Promise.all(files.map((file) => uploadOne(file)));
+  }
+
+  function stageFiles(files: File[]): void {
     const accepted: File[] = [];
     const rejected: string[] = [];
     for (const file of files) {
@@ -130,13 +172,23 @@ export default function DocumentsPage() {
       }
     }
     setRejectedFiles(rejected);
-    await Promise.all(accepted.map((file) => uploadOne(file)));
+    setStagedFiles((prev) => [...prev, ...accepted]);
+  }
+
+  function removeStagedFile(index: number): void {
+    setStagedFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function startStagedUpload(): Promise<void> {
+    const files = stagedFiles;
+    setStagedFiles([]);
+    await handleFiles(files);
   }
 
   function handleFileInputChange(): void {
     const files = fileInputRef.current?.files;
     if (!files || files.length === 0) return;
-    void handleFiles(Array.from(files));
+    stageFiles(Array.from(files));
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -146,16 +198,65 @@ export default function DocumentsPage() {
     const files = Array.from(event.dataTransfer.files).filter(
       (file) => file.type === "application/pdf"
     );
-    if (files.length > 0) void handleFiles(files);
+    if (files.length > 0) stageFiles(files);
   }
 
-  async function handleDelete(documentId: string): Promise<void> {
-    setDeletingId(documentId);
-    const response = await apiFetch(`/documents/${documentId}`, { method: "DELETE" });
-    setDeletingId(null);
-    if (response.ok) {
-      setServerDocuments((prev) => prev.filter((doc) => doc.document_id !== documentId));
-    }
+  async function deleteDocuments(documentIds: string[]): Promise<void> {
+    const names = serverDocuments
+      .filter((doc) => documentIds.includes(doc.document_id))
+      .map((doc) => doc.filename);
+    const confirmed = window.confirm(
+      names.length === 1
+        ? `This will permanently delete "${names[0]}". This cannot be undone. Continue?`
+        : `This will permanently delete ${names.length} files (${names.join(", ")}). This cannot be undone. Continue?`
+    );
+    if (!confirmed) return;
+
+    setDeletingIds((prev) => new Set([...prev, ...documentIds]));
+    // Each delete is caught individually so a network-level rejection on one document can never
+    // stop `Promise.all` from resolving -- otherwise the cleanup below would never run, leaving
+    // every attempted row stuck on "Deleting..." forever (Finding 3). A caught failure is treated
+    // the same as a non-ok response: the id is left in place instead of removed (Finding 2).
+    const results = await Promise.all(
+      documentIds.map(async (id) => {
+        const ok = await apiFetch(`/documents/${id}`, { method: "DELETE" })
+          .then((response) => response.ok)
+          .catch(() => false);
+        return { id, ok };
+      })
+    );
+    const succeededIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
+    setServerDocuments((prev) => prev.filter((doc) => !succeededIds.has(doc.document_id)));
+    setSelectedDocumentIds((prev) => {
+      const next = new Set(prev);
+      succeededIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      documentIds.forEach((id) => next.delete(id));
+      return next;
+    });
+  }
+
+  function toggleDocumentSelection(documentId: string): void {
+    setSelectedDocumentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(documentId)) {
+        next.delete(documentId);
+      } else {
+        next.add(documentId);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll(): void {
+    setSelectedDocumentIds((prev) =>
+      prev.size === serverDocuments.length
+        ? new Set()
+        : new Set(serverDocuments.map((d) => d.document_id))
+    );
   }
 
   async function handleRetry(jobId: string, filename: string): Promise<void> {
@@ -165,7 +266,7 @@ export default function DocumentsPage() {
     if (!response.ok) return;
 
     const { job_id: newJobId } = (await response.json()) as { job_id: string };
-    dismissInProgress(jobId);
+    clearInProgressLocally(jobId);
     updateInProgress({ id: newJobId, title: filename, lastUpdated: Date.now(), status: "pending" });
     void pollJob(newJobId, filename);
   }
@@ -195,12 +296,13 @@ export default function DocumentsPage() {
             type="file"
             accept="application/pdf"
             multiple
+            aria-label="Choose PDF files"
             onChange={handleFileInputChange}
-            className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
+            className="text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
           />
         </div>
       </div>
-      <p className="mb-6 text-xs text-slate-400">Maximum file size: {MAX_UPLOAD_SIZE_LABEL} per PDF.</p>
+      <p className="mb-2 text-xs text-slate-400">Maximum file size: {MAX_UPLOAD_SIZE_LABEL} per PDF.</p>
 
       {rejectedFiles.length > 0 && (
         <p className="mb-6 text-sm text-red-600">
@@ -208,17 +310,65 @@ export default function DocumentsPage() {
         </p>
       )}
 
+      {stagedFiles.length > 0 && (
+        <div className="mb-6 rounded-xl border border-slate-200 p-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+            Ready to upload
+          </p>
+          <ul className="mb-3 flex flex-col gap-1">
+            {stagedFiles.map((file, index) => (
+              <li
+                key={`${file.name}-${index}`}
+                className="flex items-center justify-between text-sm text-slate-700"
+              >
+                <span className="truncate">{file.name}</span>
+                <button
+                  type="button"
+                  className="ml-2 shrink-0 text-xs text-slate-400 hover:text-slate-700"
+                  onClick={() => removeStagedFile(index)}
+                  aria-label={`Remove ${file.name} from upload`}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+          <Button onClick={() => void startStagedUpload()}>
+            Upload {stagedFiles.length} file{stagedFiles.length === 1 ? "" : "s"}
+          </Button>
+        </div>
+      )}
+
       {uploadsInFlight.length > 0 && (
         <ul className="mb-8 flex flex-col gap-2">
           {uploadsInFlight.map((upload) => (
             <li key={upload.id} className="rounded-xl border border-slate-200 p-4">
-              <p className="mb-2 truncate text-sm font-medium text-slate-900">{upload.name}</p>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                <div
-                  className="h-full rounded-full bg-slate-900 transition-all"
-                  style={{ width: `${Math.round(upload.progress * 100)}%` }}
-                />
-              </div>
+              <p className="mb-2 truncate text-sm font-medium text-slate-900">{upload.file.name}</p>
+              {upload.status === "failed" ? (
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-red-600">Upload failed.</p>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => retryUpload(upload.id)}>
+                      Try again
+                    </Button>
+                    <button
+                      type="button"
+                      className="shrink-0 text-xs text-slate-400 hover:text-slate-700"
+                      onClick={() => removeFailedUpload(upload.id)}
+                      aria-label={`Remove ${upload.file.name} from uploads`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full bg-slate-900 transition-all"
+                    style={{ width: `${Math.round(upload.progress * 100)}%` }}
+                  />
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -248,16 +398,13 @@ export default function DocumentsPage() {
                   {doc.status === "failed" && (
                     <>
                       <Button
-                        className="bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100"
+                        variant="outline"
                         onClick={() => void handleRetry(doc.id, doc.title)}
                         disabled={retryingId === doc.id}
                       >
                         {retryingId === doc.id ? "Retrying..." : "Retry"}
                       </Button>
-                      <Button
-                        className="bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100"
-                        onClick={() => dismissInProgress(doc.id)}
-                      >
+                      <Button variant="outline" onClick={() => void dismissInProgress(doc.id)}>
                         Dismiss
                       </Button>
                     </>
@@ -269,29 +416,57 @@ export default function DocumentsPage() {
         </>
       )}
 
-      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-        Your documents
-      </p>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          Your documents
+        </p>
+        {selectedDocumentIds.size > 0 && (
+          <Button
+            variant="danger"
+            onClick={() => void deleteDocuments(Array.from(selectedDocumentIds))}
+          >
+            Delete selected ({selectedDocumentIds.size})
+          </Button>
+        )}
+      </div>
       {serverDocuments.length === 0 ? (
         <p className="text-sm text-slate-400">No documents uploaded yet.</p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {serverDocuments.map((doc) => (
-            <li
-              key={doc.document_id}
-              className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
-            >
-              <p className="font-medium text-slate-900">{doc.filename}</p>
-              <Button
-                className="bg-white text-red-600 ring-1 ring-red-200 hover:bg-red-50"
-                onClick={() => void handleDelete(doc.document_id)}
-                disabled={deletingId === doc.document_id}
+        <>
+          <label className="mb-2 flex items-center gap-2 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={selectedDocumentIds.size === serverDocuments.length}
+              onChange={toggleSelectAll}
+            />
+            Select all
+          </label>
+          <ul className="flex flex-col gap-2">
+            {serverDocuments.map((doc) => (
+              <li
+                key={doc.document_id}
+                className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
               >
-                {deletingId === doc.document_id ? "Deleting..." : "Delete"}
-              </Button>
-            </li>
-          ))}
-        </ul>
+                <label className="flex min-w-0 items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedDocumentIds.has(doc.document_id)}
+                    onChange={() => toggleDocumentSelection(doc.document_id)}
+                  />
+                  <span className="truncate font-medium text-slate-900">{doc.filename}</span>
+                  <ConfidenceBadge confidence={doc.parsing_confidence} />
+                </label>
+                <Button
+                  variant="danger"
+                  onClick={() => void deleteDocuments([doc.document_id])}
+                  disabled={deletingIds.has(doc.document_id)}
+                >
+                  {deletingIds.has(doc.document_id) ? "Deleting..." : "Delete"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );

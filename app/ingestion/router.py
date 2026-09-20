@@ -11,8 +11,8 @@ from app.auth.schemas import CurrentUser
 from app.embedding.service import delete_document_and_vectors
 from app.ingestion import jobs
 from app.ingestion.config import get_settings
-from app.ingestion.schemas import DocumentListResponse, JobStatusResponse
-from app.ingestion.service import list_documents
+from app.ingestion.schemas import ChunkDetailResponse, DocumentListResponse, JobStatusResponse
+from app.ingestion.service import get_chunk_detail, list_documents
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 documents_router = APIRouter(prefix="/documents", tags=["documents"])
@@ -105,6 +105,13 @@ def retry_job(
     return {"job_id": new_job_id}
 
 
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job_endpoint(job_id: str, current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Delete a failed job's record and temp file. 404 if unknown, not owned, or not failed."""
+    if not jobs.delete_job(job_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Failed job not found")
+
+
 @documents_router.get("")
 def list_documents_endpoint(current_user: CurrentUser = Depends(get_current_user)) -> DocumentListResponse:
     """Return the caller's successfully ingested documents, newest first."""
@@ -117,3 +124,14 @@ def delete_document_endpoint(document_id: str, current_user: CurrentUser = Depen
     deleted = delete_document_and_vectors(document_id, current_user.id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Document not found")
+
+
+@documents_router.get("/{document_id}/chunks/{chunk_id}")
+def get_chunk_endpoint(
+    document_id: str, chunk_id: str, current_user: CurrentUser = Depends(get_current_user)
+) -> ChunkDetailResponse:
+    """Return one chunk's full text for the source panel. 404 if unknown or not owned by the caller."""
+    chunk = get_chunk_detail(document_id, chunk_id, current_user.id)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    return chunk

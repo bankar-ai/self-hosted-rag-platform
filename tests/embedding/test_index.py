@@ -192,3 +192,44 @@ def test_owner_store_remove_empty_is_a_noop_without_creating_a_file(tmp_path):
     store.remove(owner_id, [])
 
     assert not (tmp_path / f"{owner_id}.bin").exists()
+
+
+def test_search_with_allowed_vector_ids_restricts_to_that_subset(tmp_path):
+    # A poor match (id 2) is the only one allowed; a near-perfect match (id 1) is excluded --
+    # this proves filtering happens at search time, not as a post-hoc filter over an
+    # already-truncated top-k (ERP-044), which could have missed id 2 entirely if the index
+    # held more vectors than fit in k.
+    index = FaissIndex(str(tmp_path / "index.bin"), dimension=4)
+    index.add([1, 2], [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+
+    results = index.search([1.0, 0.0, 0.0, 0.0], k=5, allowed_vector_ids=[2])
+
+    assert [vector_id for vector_id, _ in results] == [2]
+
+
+def test_search_with_none_allowed_vector_ids_is_unrestricted(tmp_path):
+    index = FaissIndex(str(tmp_path / "index.bin"), dimension=4)
+    index.add([1, 2], [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+
+    results = index.search([1.0, 0.0, 0.0, 0.0], k=5, allowed_vector_ids=None)
+
+    assert {vector_id for vector_id, _ in results} == {1, 2}
+
+
+def test_search_with_empty_allowed_vector_ids_returns_nothing(tmp_path):
+    index = FaissIndex(str(tmp_path / "index.bin"), dimension=4)
+    index.add([1, 2], [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+
+    # An empty allowed list ("search nothing") must short-circuit, distinct from `None`
+    # ("unrestricted") -- even though real vectors exist, none are in the allowed set.
+    assert index.search([1.0, 0.0, 0.0, 0.0], k=5, allowed_vector_ids=[]) == []
+
+
+def test_owner_store_search_with_allowed_vector_ids(tmp_path):
+    store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    owner_id = uuid.uuid4()
+    store.add(owner_id, [1, 2], [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
+
+    results = store.search(owner_id, [1.0, 0.0, 0.0, 0.0], k=5, allowed_vector_ids=[2])
+
+    assert [vector_id for vector_id, _ in results] == [2]

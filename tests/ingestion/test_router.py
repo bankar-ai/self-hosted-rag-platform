@@ -276,6 +276,9 @@ def test_list_documents_returns_document_after_successful_ingestion(simple_text_
     assert response.status_code == 200
     documents = response.json()["documents"]
     assert any(d["document_id"] == document_id and d["filename"] == "simple.pdf" for d in documents)
+    # ERP-076: a document parsed via the fast path (as this simple-text fixture is) gets "high".
+    matching = next(d for d in documents if d["document_id"] == document_id)
+    assert matching["parsing_confidence"] == "high"
 
 
 def test_list_documents_does_not_include_another_users_documents(simple_text_pdf, auth_headers):
@@ -350,3 +353,121 @@ def test_upload_pdf_rejects_oversized_file(monkeypatch, auth_headers):
         assert response.status_code == 413
     finally:
         get_settings.cache_clear()
+
+
+def test_get_chunk_returns_text_and_metadata(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+    chunk_id = final["result"]["chunks"][0]["chunk_id"]
+
+    response = client.get(f"/documents/{document_id}/chunks/{chunk_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["chunk_id"] == chunk_id
+    assert body["document_id"] == document_id
+    assert body["text"] == final["result"]["chunks"][0]["text"]
+    assert body["source_filename"] == "simple.pdf"
+
+
+def test_get_chunk_404_for_unknown_chunk(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+
+    response = client.get(f"/documents/{document_id}/chunks/does-not-exist", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_get_chunk_404_for_chunk_belonging_to_another_user(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    final = _poll_until_done(upload.json()["job_id"], auth_headers)
+    document_id = final["result"]["document_id"]
+    chunk_id = final["result"]["chunks"][0]["chunk_id"]
+
+    other_user_headers = register_and_login(client, "ingestion-chunk-detail-other-owner")
+    response = client.get(
+        f"/documents/{document_id}/chunks/{chunk_id}", headers=other_user_headers
+    )
+    assert response.status_code == 404
+
+
+def test_delete_job_removes_a_failed_job(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    failed = _poll_until_done(job_id, auth_headers)
+    assert failed["status"] == "failed"
+
+    response = client.delete(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert response.status_code == 204
+
+    status_response = client.get(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert status_response.status_code == 404
+
+
+def test_delete_job_404_for_unknown_job(auth_headers):
+    response = client.delete("/ingestion/jobs/does-not-exist", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_delete_job_404_for_a_job_that_is_not_failed(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    done = _poll_until_done(job_id, auth_headers)
+    assert done["status"] == "done"
+
+    response = client.delete(f"/ingestion/jobs/{job_id}", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_delete_job_404_for_job_belonging_to_another_user(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    _poll_until_done(job_id, auth_headers)
+
+    other_user_headers = register_and_login(client, "ingestion-delete-job-other-owner")
+    response = client.delete(f"/ingestion/jobs/{job_id}", headers=other_user_headers)
+    assert response.status_code == 404

@@ -17,12 +17,20 @@ def save_document_and_chunks(
     source_filename: str,
     chunks: list[Chunk],
     owner_id: uuid.UUID,
+    parsing_confidence: str = "high",
 ) -> list[ChunkRecord]:
     """Persist one document and its chunks in `session`, flushing so `vector_id`s are assigned.
 
     Does not commit — the caller controls the transaction boundary.
     """
-    session.add(DocumentRecord(document_id=document_id, filename=source_filename, owner_id=owner_id))
+    session.add(
+        DocumentRecord(
+            document_id=document_id,
+            filename=source_filename,
+            owner_id=owner_id,
+            parsing_confidence=parsing_confidence,
+        )
+    )
     session.flush()
 
     records = [
@@ -93,31 +101,62 @@ def get_chunks_by_vector_ids(
 
 
 def search_chunks_by_text(
-    session: Session, query_text: str, k: int, owner_id: uuid.UUID
+    session: Session,
+    query_text: str,
+    k: int,
+    owner_id: uuid.UUID,
+    document_ids: list[str] | None = None,
 ) -> list[tuple[int, float]]:
     """Full-text search chunk text via Postgres, restricted to `owner_id`'s documents.
 
-    Returns `(vector_id, rank)` pairs, best-first. `[]` for a blank query, `k <= 0`, or no
-    matching chunks. Uses `plainto_tsquery` (safe against arbitrary user input, no `tsquery`
-    syntax to escape) against the generated `search_vector` column, ranked by `ts_rank`.
+    Returns `(vector_id, rank)` pairs, best-first. `[]` for a blank query, `k <= 0`, no matching
+    chunks, or `document_ids == []` (explicitly "search nothing", ERP-044 -- distinct from
+    `None` meaning "no restriction, search everything owned"). Uses `plainto_tsquery` (safe
+    against arbitrary user input, no `tsquery` syntax to escape) against the generated
+    `search_vector` column, ranked by `ts_rank`.
     """
     with get_tracer().start_as_current_span("bm25.search") as span:
         span.set_attribute("bm25.k", k)
-        if not query_text.strip() or k <= 0:
+        if not query_text.strip() or k <= 0 or document_ids == []:
             span.set_attribute("bm25.hits", 0)
             return []
         tsquery = func.plainto_tsquery("english", query_text)
         rank = func.ts_rank(ChunkRecord.search_vector, tsquery).label("rank")
+        conditions = [ChunkRecord.search_vector.op("@@")(tsquery), DocumentRecord.owner_id == owner_id]
+        if document_ids is not None:
+            conditions.append(ChunkRecord.document_id.in_(document_ids))
         rows = session.execute(
             select(ChunkRecord.vector_id, rank)
             .join(DocumentRecord, ChunkRecord.document_id == DocumentRecord.document_id)
-            .where(ChunkRecord.search_vector.op("@@")(tsquery), DocumentRecord.owner_id == owner_id)
+            .where(*conditions)
             .order_by(rank.desc())
             .limit(k)
         ).all()
         result = [(int(vector_id), float(rank_value)) for vector_id, rank_value in rows]
         span.set_attribute("bm25.hits", len(result))
         return result
+
+
+def get_vector_ids_for_documents(
+    session: Session, owner_id: uuid.UUID, document_ids: list[str]
+) -> list[int]:
+    """Return the `vector_id`s of every chunk in `document_ids`, restricted to `owner_id`.
+
+    Used to build a FAISS `IDSelectorBatch` for document-scoped retrieval (ERP-044) -- FAISS
+    only knows vector IDs, not document IDs, so the caller/document-set has to be resolved to
+    vector IDs before it can restrict a FAISS search. `[]` for empty input; a `document_id` not
+    owned by `owner_id` simply contributes no vector IDs (silently excluded, not an error --
+    matches this module's existing owner-scoping convention elsewhere).
+    """
+    if not document_ids:
+        return []
+    return list(
+        session.scalars(
+            select(ChunkRecord.vector_id)
+            .join(DocumentRecord, ChunkRecord.document_id == DocumentRecord.document_id)
+            .where(ChunkRecord.document_id.in_(document_ids), DocumentRecord.owner_id == owner_id)
+        ).all()
+    )
 
 
 def get_sibling_chunks(
@@ -141,3 +180,24 @@ def get_sibling_chunks(
         for row in rows
         if row.section_path == section_path and row.chunk_id not in exclude_chunk_ids
     ]
+
+
+def get_chunk_by_document_and_owner(
+    session: Session, document_id: str, chunk_id: str, owner_id: uuid.UUID
+) -> ChunkRecord | None:
+    """Fetch one chunk by its document and chunk ID, restricted to `owner_id`'s documents.
+
+    Backs the frontend's source panel (ERP-050) -- returns `None` if the chunk doesn't exist,
+    doesn't belong to `document_id`, or the document isn't owned by `owner_id`, one
+    undifferentiated "not found" for all three cases, matching this module's existing
+    cross-owner-access convention.
+    """
+    return session.scalar(
+        select(ChunkRecord)
+        .join(DocumentRecord, ChunkRecord.document_id == DocumentRecord.document_id)
+        .where(
+            ChunkRecord.chunk_id == chunk_id,
+            ChunkRecord.document_id == document_id,
+            DocumentRecord.owner_id == owner_id,
+        )
+    )

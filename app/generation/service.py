@@ -115,6 +115,7 @@ def generate(
     conversation_id: uuid.UUID | None = None,
     settings: GenerationSettings | None = None,
     llm_client: LLMClient | None = None,
+    document_ids: list[str] | None = None,
 ) -> GenerationResponse:
     """Retrieve context for `query` (scoped to `owner_id`) and synthesize a grounded, citation-marked answer.
 
@@ -149,7 +150,9 @@ def generate(
         if _GREETING_RE.match(query):
             return GenerationResponse(answer=GREETING_ANSWER, citations=[], conversation_id=None)
 
-        chunks = retrieval_search(query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections)
+        chunks = retrieval_search(
+            query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections, document_ids=document_ids
+        )
         if not chunks:
             return GenerationResponse(answer=NO_CONTEXT_ANSWER, citations=[], conversation_id=None)
 
@@ -181,7 +184,12 @@ def generate(
             rewritten_query = query
 
         chunks = retrieval_search(
-            rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
+            rewritten_query,
+            top_k,
+            owner_id,
+            rerank=rerank,
+            expand_sections=expand_sections,
+            document_ids=document_ids,
         )
         if not chunks:
             answer = NO_CONTEXT_ANSWER
@@ -197,7 +205,13 @@ def generate(
     with session_factory() as write_session:
         get_or_create_conversation(write_session, conversation_id, owner_id)
         append_message(write_session, conversation_id, "user", query)
-        assistant_record = append_message(write_session, conversation_id, "assistant", answer)
+        assistant_record = append_message(
+            write_session,
+            conversation_id,
+            "assistant",
+            answer,
+            citations=[c.model_dump() for c in citations],
+        )
         write_session.commit()
 
     return GenerationResponse(
@@ -217,6 +231,7 @@ def generate_stream(
     conversation_id: uuid.UUID | None = None,
     settings: GenerationSettings | None = None,
     llm_client: LLMClient | None = None,
+    document_ids: list[str] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Streaming counterpart to `generate`: yields `(event, data)` tuples instead of returning one response.
 
@@ -248,7 +263,12 @@ def generate_stream(
                 return
 
             chunks = retrieval_search(
-                query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
+                query,
+                top_k,
+                owner_id,
+                rerank=rerank,
+                expand_sections=expand_sections,
+                document_ids=document_ids,
             )
             if not chunks:
                 yield "token", {"text": NO_CONTEXT_ANSWER}
@@ -278,6 +298,7 @@ def generate_stream(
             )
             history = [ConversationTurn(role=r.role, content=r.content) for r in history_records]
 
+        citations = []
         if _GREETING_RE.match(query):
             yield "token", {"text": GREETING_ANSWER}
             yield "citations", {"citations": []}
@@ -290,7 +311,12 @@ def generate_stream(
                 rewritten_query = query
 
             chunks = retrieval_search(
-                rewritten_query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections
+                rewritten_query,
+                top_k,
+                owner_id,
+                rerank=rerank,
+                expand_sections=expand_sections,
+                document_ids=document_ids,
             )
             if not chunks:
                 yield "token", {"text": NO_CONTEXT_ANSWER}
@@ -312,7 +338,13 @@ def generate_stream(
         with session_factory() as write_session:
             get_or_create_conversation(write_session, conversation_id, owner_id)
             append_message(write_session, conversation_id, "user", query)
-            assistant_record = append_message(write_session, conversation_id, "assistant", answer)
+            assistant_record = append_message(
+                write_session,
+                conversation_id,
+                "assistant",
+                answer,
+                citations=[c.model_dump() for c in citations],
+            )
             write_session.commit()
 
         yield "done", {
@@ -346,6 +378,7 @@ def get_conversation_history(
             content=record.content,
             created_at=record.created_at,
             feedback=feedback_by_message_id.get(record.id),
+            citations=[Citation(**c) for c in (record.citations or [])],
         )
         for record in records
     ]

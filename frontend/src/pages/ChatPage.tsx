@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import CopyButton from "../components/CopyButton";
+import Sidebar, { type SidebarConversation, type SidebarDocument } from "../components/Sidebar";
 import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { renderMarkdownLite } from "../lib/markdownLite";
@@ -20,15 +22,10 @@ interface ChatMessage {
   feedback?: "up" | "down" | null;
 }
 
-interface SidebarConversation {
-  id: string;
-  title: string;
-}
-
-interface SidebarDocument {
-  id: string;
-  title: string;
-}
+// ERP-081: SourcePanel pulls in react-markdown/rehype-raw/rehype-sanitize (ERP-067), which
+// nearly doubled the bundle -- it's only ever needed once a citation is clicked, so it's
+// split into its own chunk rather than loaded on every page visit.
+const SourcePanel = lazy(() => import("../components/SourcePanel"));
 
 function newConversationId(): string {
   return crypto.randomUUID();
@@ -63,6 +60,19 @@ function formatCitation(citation: Citation): string {
   return `${citation.source_filename}, ${pages}`;
 }
 
+function buildTranscriptText(messages: { role: string; content: string }[]): string {
+  return messages
+    .filter((m) => m.role !== "error")
+    .map((m) => `${m.role === "user" ? "You" : "Assistant"}: ${m.content}`)
+    .join("\n\n");
+}
+
+/** One Q&A turn's copy text -- the question plus its paired answer, if one exists yet
+ * (a question still awaiting its answer has nothing to pair with). */
+function buildTurnText(question: string, answer: string | undefined): string {
+  return answer ? `You: ${question}\n\nAssistant: ${answer}` : `You: ${question}`;
+}
+
 function TypingIndicator() {
   return (
     <div className="flex gap-1 px-1 py-1">
@@ -83,7 +93,40 @@ export default function ChatPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [recentConversations, setRecentConversations] = useState<SidebarConversation[]>([]);
   const [documents, setDocuments] = useState<SidebarDocument[]>([]);
+  // ERP-044: opt-out model -- a document is included in every query's scope unless the user
+  // has explicitly unchecked it, so newly-uploaded documents are selected by default without
+  // needing to sync this set whenever the document list refreshes.
+  const [deselectedDocumentIds, setDeselectedDocumentIds] = useState<Set<string>>(new Set());
+  const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  // ERP-078: the sidebar collapses into a toggleable overlay below the `md` breakpoint.
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // ERP-079: remembers whichever citation marker/list-item was clicked to open the source
+  // panel, so closing it (Escape, the close button, or picking another citation) can return
+  // focus there instead of dropping it silently.
+  const sourcePanelTriggerRef = useRef<HTMLElement | null>(null);
+
+  function openSourcePanel(citation: Citation): void {
+    sourcePanelTriggerRef.current = document.activeElement as HTMLElement | null;
+    setSelectedCitation(citation);
+  }
+
+  function closeSourcePanel(): void {
+    setSelectedCitation(null);
+    sourcePanelTriggerRef.current?.focus();
+  }
+
+  function toggleDocumentSelected(id: string): void {
+    setDeselectedDocumentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   // Both lists are hydrated from the backend (not localStorage) so chat history and the
   // document list survive a login from a new browser/device -- the data was always
@@ -128,7 +171,11 @@ export default function ChatPage() {
       if (!response.ok) return;
       const body = (await response.json()) as DocumentListResponse;
       setDocuments(
-        body.documents.map((document) => ({ id: document.document_id, title: document.filename }))
+        body.documents.map((document) => ({
+          id: document.document_id,
+          title: document.filename,
+          parsingConfidence: document.parsing_confidence,
+        }))
       );
     })();
   }, [userId]);
@@ -141,6 +188,7 @@ export default function ChatPage() {
   function startNewConversation(): void {
     setConversationId(newConversationId());
     setMessages([]);
+    setSelectedCitation(null);
   }
 
   /**
@@ -163,13 +211,25 @@ export default function ChatPage() {
         role: message.role === "user" ? "user" : "assistant",
         content: message.content,
         feedback: message.feedback,
+        citations: message.citations,
       }))
     );
   }
 
   async function selectConversation(id: string): Promise<void> {
     setConversationId(id);
+    setSelectedCitation(null);
     await loadConversationHistory(id);
+  }
+
+  /** Fetches and formats a conversation's transcript on demand, for the sidebar's per-row copy
+   * action (ERP-075) -- the sidebar only ever holds an id/title, never the full history, so
+   * unlike the open chat's "Copy conversation" this can't just read from local state. */
+  async function copyConversationTranscript(id: string): Promise<string> {
+    const response = await apiFetch(`/conversations/${id}`);
+    if (!response.ok) return "";
+    const body = (await response.json()) as ConversationHistoryResponse;
+    return buildTranscriptText(body.messages);
   }
 
   async function renameConversation(id: string, title: string): Promise<void> {
@@ -216,12 +276,19 @@ export default function ChatPage() {
     setIsStreaming(true);
 
     const isFirstMessage = messages.length === 0;
+    const documentIds = documents
+      .filter((doc) => !deselectedDocumentIds.has(doc.id))
+      .map((doc) => doc.id);
 
     try {
       const response = await apiFetch("/generation/query/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, conversation_id: conversationId }),
+        body: JSON.stringify({
+          query,
+          conversation_id: conversationId,
+          document_ids: documentIds,
+        }),
       });
 
       if (!response.ok) {
@@ -281,62 +348,44 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-64 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50 p-4">
-        <Button className="mb-4 w-full" onClick={startNewConversation}>
-          New chat
-        </Button>
-        <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-          Recent conversations
-        </p>
-        {recentConversations.length === 0 ? (
-          <p className="px-1 text-sm text-slate-400">No conversations yet.</p>
-        ) : (
-          <ul className="mb-6 flex flex-col gap-1">
-            {recentConversations.map((conv) => (
-              <li key={conv.id} className="flex items-center gap-1">
-                <button
-                  className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-slate-200 ${
-                    conv.id === conversationId ? "bg-slate-200 font-medium" : "text-slate-700"
-                  }`}
-                  onClick={() => void selectConversation(conv.id)}
-                >
-                  {conv.title}
-                </button>
-                <button
-                  className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
-                  title="Rename conversation"
-                  onClick={() => handleRename(conv)}
-                >
-                  ✎
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-          Your documents
-        </p>
-        {documents.length === 0 ? (
-          <p className="px-1 text-sm text-slate-400">
-            No documents uploaded yet — visit Documents to add one.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-1">
-            {documents.map((doc) => (
-              <li key={doc.id} className="flex items-center gap-2 px-2 py-1 text-sm text-slate-600">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                <span className="truncate">{doc.title}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </aside>
-      <main className="flex flex-1 flex-col bg-white">
+      <Sidebar
+        recentConversations={recentConversations}
+        activeConversationId={conversationId}
+        onSelectConversation={(id) => void selectConversation(id)}
+        onRenameConversation={handleRename}
+        onCopyTranscript={copyConversationTranscript}
+        onNewConversation={startNewConversation}
+        documents={documents}
+        deselectedDocumentIds={deselectedDocumentIds}
+        onToggleDocument={toggleDocumentSelected}
+        isOpenOnMobile={isSidebarOpen}
+        onCloseMobile={() => setIsSidebarOpen(false)}
+      />
+      <main className="flex min-w-0 flex-1 flex-col bg-white">
+        <div className="border-b border-slate-200 px-4 py-2 md:hidden">
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            ☰ Menu
+          </button>
+        </div>
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {messages.length === 0 && (
             <p className="mt-12 text-center text-sm text-slate-400">
               Ask a question about one of your uploaded documents to get started.
             </p>
+          )}
+          {messages.length > 0 && (
+            <div className="mx-auto mb-2 flex max-w-2xl justify-end">
+              <CopyButton
+                getText={() => buildTranscriptText(messages)}
+                label="Copy conversation"
+                className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              />
+            </div>
           )}
           <div className="mx-auto flex max-w-2xl flex-col gap-3">
             {messages.map((message, index) => {
@@ -349,7 +398,7 @@ export default function ChatPage() {
                   data-role={message.role}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-slate-900 px-4 py-2 text-white"
+                      ? "ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-brand px-4 py-2 text-white"
                       : message.role === "error"
                         ? "max-w-[80%] rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-red-700"
                         : "max-w-[80%] rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 px-4 py-2 text-slate-900"
@@ -358,49 +407,76 @@ export default function ChatPage() {
                   {isPendingAssistant ? (
                     <TypingIndicator />
                   ) : (
-                    <div className="text-sm">{renderMarkdownLite(message.content)}</div>
+                    <div className="text-sm">
+                      {renderMarkdownLite(message.content, message.citations ?? [], openSourcePanel)}
+                    </div>
+                  )}
+                  {message.role === "user" && (
+                    <div className="mt-1 flex justify-end">
+                      <CopyButton
+                        getText={() => {
+                          const next = messages[index + 1];
+                          return buildTurnText(
+                            message.content,
+                            next?.role === "assistant" ? next.content : undefined
+                          );
+                        }}
+                        label="Copy Q&A"
+                        className="rounded px-1.5 py-0.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                      />
+                    </div>
                   )}
                   {message.citations && message.citations.length > 0 && (
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
                       {message.citations.map((citation, citationIndex) => (
                         <li key={citation.chunk_id}>
-                          <details>
-                            <summary className="cursor-pointer">
-                              [{citationIndex + 1}] {formatCitation(citation)}
-                            </summary>
-                            <p className="mt-0.5 pl-3 text-slate-400">
-                              Relevance score: {citation.score.toFixed(3)}
-                              {citation.reranked ? " (reranked)" : " (retrieval fusion score)"}
-                            </p>
-                          </details>
+                          <button
+                            type="button"
+                            className="text-left hover:text-slate-700 hover:underline"
+                            onClick={(event) => {
+                              event.currentTarget.focus();
+                              openSourcePanel(citation);
+                            }}
+                          >
+                            [{citationIndex + 1}] {formatCitation(citation)}
+                          </button>
                         </li>
                       ))}
                     </ul>
                   )}
-                  {message.role === "assistant" && message.id && !isPendingAssistant && (
+                  {message.role === "assistant" && !isPendingAssistant && message.content && (
                     <div className="mt-2 flex items-center gap-1 border-t border-slate-200 pt-2">
-                      <button
-                        className={`rounded px-1.5 py-0.5 text-xs ${
-                          message.feedback === "up"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "text-slate-400 hover:bg-slate-200"
-                        }`}
-                        title="Good answer"
-                        onClick={() => void setMessageFeedback(message.id!, "up")}
-                      >
-                        👍
-                      </button>
-                      <button
-                        className={`rounded px-1.5 py-0.5 text-xs ${
-                          message.feedback === "down"
-                            ? "bg-red-100 text-red-700"
-                            : "text-slate-400 hover:bg-slate-200"
-                        }`}
-                        title="Bad answer"
-                        onClick={() => void setMessageFeedback(message.id!, "down")}
-                      >
-                        👎
-                      </button>
+                      <CopyButton
+                        getText={() => message.content}
+                        label="Copy"
+                        className="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-200"
+                      />
+                      {message.id && (
+                        <>
+                          <button
+                            className={`rounded px-1.5 py-0.5 text-xs ${
+                              message.feedback === "up"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "text-slate-400 hover:bg-slate-200"
+                            }`}
+                            title="Good answer"
+                            onClick={() => void setMessageFeedback(message.id!, "up")}
+                          >
+                            👍
+                          </button>
+                          <button
+                            className={`rounded px-1.5 py-0.5 text-xs ${
+                              message.feedback === "down"
+                                ? "bg-red-100 text-red-700"
+                                : "text-slate-400 hover:bg-slate-200"
+                            }`}
+                            title="Bad answer"
+                            onClick={() => void setMessageFeedback(message.id!, "down")}
+                          >
+                            👎
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -429,6 +505,15 @@ export default function ChatPage() {
           </div>
         </div>
       </main>
+      {selectedCitation && (
+        <Suspense
+          fallback={
+            <aside className="fixed inset-0 z-40 w-full border-l border-slate-200 bg-slate-50 md:static md:inset-auto md:z-auto md:w-80 md:shrink-0" />
+          }
+        >
+          <SourcePanel citation={selectedCitation} onClose={closeSourcePanel} />
+        </Suspense>
+      )}
     </div>
   );
 }

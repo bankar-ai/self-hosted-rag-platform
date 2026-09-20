@@ -26,6 +26,7 @@ def query(
             current_user.id,
             rerank=query_request.rerank,
             expand_sections=query_request.expand_sections,
+            document_ids=query_request.document_ids,
         )
     except Exception as exc:
         logger.exception("Retrieval query failed")

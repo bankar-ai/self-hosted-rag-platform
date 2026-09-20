@@ -21,6 +21,15 @@ class GenerationQuery(BaseModel):
     rerank: bool = Field(default=False)
     expand_sections: bool = Field(default=False)
     conversation_id: uuid.UUID | None = Field(default=None)
+    document_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Restrict retrieval to these document IDs (ERP-044). Omitted/null searches "
+            "everything the caller owns, unchanged from before this field existed; an empty "
+            "list explicitly searches nothing, short-circuiting to the same 'not enough "
+            "information' answer as a genuinely empty retrieval result."
+        ),
+    )
 
 
 class ConversationTurn(BaseModel):
@@ -75,7 +84,9 @@ class Message(BaseModel):
 
     `id` and `feedback` (ERP-045) let the caller show/set a thumbs up/down rating -- `feedback`
     is `None` both when the message has never been rated and (always) for a `"user"`-role
-    message, which can't be rated at all.
+    message, which can't be rated at all. `citations` (ERP-080) is likewise always `[]` for a
+    `"user"`-role message and for any message persisted before this field existed --  it lets
+    a reloaded conversation's assistant messages keep working, clickable citation markers.
     """
 
     id: uuid.UUID
@@ -83,6 +94,7 @@ class Message(BaseModel):
     content: str
     created_at: datetime
     feedback: Literal["up", "down"] | None = None
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ConversationHistoryResponse(BaseModel):

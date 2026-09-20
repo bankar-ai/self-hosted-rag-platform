@@ -1,0 +1,92 @@
+name: Evaluation Gate
+
+# ERP-083: an on-demand regression check for retrieval/generation quality against the golden
+# dataset (ERP-029/ERP-030), run against a Modal Ollama endpoint dedicated to CI -- never the
+# production endpoint (see deploy/modal_ollama_ci.py's docstring for why). Manual-only for now
+# (`workflow_dispatch`, via the Actions tab's "Run workflow" button) -- deliberately no
+# `schedule:` trigger, a decision made 2026-09-20 to avoid running (and paying for) a live-LLM
+# evaluation every day when nothing has changed. Revisit adding a `schedule:` (weekly was the
+# leading candidate) once there's a sense of how often this actually needs to run.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/erp_test
+      AUTH_JWT_SECRET_KEY: test-only-secret-do-not-use-in-production
+      EMBEDDING_REDIS_URL: redis://localhost:6379/0
+      RETRIEVAL_REDIS_URL: redis://localhost:6379/0
+      # The CI-dedicated Modal endpoint (deploy/modal_ollama_ci.py) -- NOT the production
+      # endpoint. Must be set as a repo secret after that app is deployed (`uv run modal deploy
+      # deploy/modal_ollama_ci.py`); this workflow has no effect (fails fast, not silently) until
+      # it is.
+      GENERATION_OLLAMA_HOST: ${{ secrets.CI_MODAL_OLLAMA_URL }}
+      EMBEDDING_OLLAMA_HOST: ${{ secrets.CI_MODAL_OLLAMA_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Verify CI Modal endpoint is configured
+        run: |
+          if [ -z "$GENERATION_OLLAMA_HOST" ]; then
+            echo "::error::CI_MODAL_OLLAMA_URL secret is not set -- deploy deploy/modal_ollama_ci.py" \
+                 "and add its endpoint URL as a repo secret before this gate can run."
+            exit 1
+          fi
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Retrieval-quality evaluation gate
+        # Baseline (ERP-029, re-verified post-ERP-031 in ERP-041): Precision@3=0.333,
+        # Recall@3=1.0, MRR=1.0. Thresholds set a little below that baseline, not equal to it,
+        # to tolerate minor legitimate float jitter from a live LLM/embedding backend without
+        # being a no-op gate.
+        run: >
+          uv run python -m app.evaluation.run
+          --fail-under-precision 0.30
+          --fail-under-recall 0.90
+          --fail-under-mrr 0.90
+
+      - name: Generation-quality evaluation gate
+        # --judge ollama, not the ragas default: ERP-030 found Ragas hangs 10+ minutes against
+        # local Ollama in practice, confirmed on a live run -- exactly the scenario the
+        # OllamaLLMClientJudge fallback exists for. Thresholds are an initial conservative floor
+        # (no established multi-run baseline yet for this metric, unlike retrieval above) --
+        # revisit once this gate has run history to tune against.
+        run: >
+          uv run python -m app.evaluation.generation_run
+          --judge ollama
+          --fail-under-faithfulness 0.70
+          --fail-under-relevancy 0.60
+          --fail-under-precision 0.50

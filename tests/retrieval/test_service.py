@@ -265,18 +265,18 @@ def test_search_requests_oversampled_candidates_from_each_retriever_before_fusio
     recorded_faiss_k = []
     original_faiss_search = faiss_index_store.search
 
-    def _spy_faiss_search(owner_id, vector, k):
+    def _spy_faiss_search(owner_id, vector, k, allowed_vector_ids=None):
         recorded_faiss_k.append(k)
-        return original_faiss_search(owner_id, vector, k)
+        return original_faiss_search(owner_id, vector, k, allowed_vector_ids=allowed_vector_ids)
 
     monkeypatch.setattr(faiss_index_store, "search", _spy_faiss_search)
 
     recorded_bm25_k = []
     original_bm25_search = service_module.search_chunks_by_text
 
-    def _spy_bm25_search(session, query, k, owner_id):
+    def _spy_bm25_search(session, query, k, owner_id, document_ids=None):
         recorded_bm25_k.append(k)
-        return original_bm25_search(session, query, k, owner_id)
+        return original_bm25_search(session, query, k, owner_id, document_ids=document_ids)
 
     monkeypatch.setattr(service_module, "search_chunks_by_text", _spy_bm25_search)
 
@@ -515,7 +515,7 @@ def test_search_returns_cached_result_without_touching_pipeline(tmp_path):
         )
     ]
     fake_cache = _FakeRetrievalCache()
-    cache_key = service_module._cache_key("cached query", 5, False, False, _TEST_OWNER_ID)
+    cache_key = service_module._cache_key("cached query", 5, False, False, _TEST_OWNER_ID, None)
     fake_cache.store[cache_key] = cached_results
 
     fake_client = _FakeEmbeddingClient(vector=[1.0, 0.0, 0.0, 0.0])
@@ -555,7 +555,7 @@ def test_search_populates_cache_on_miss(tmp_path):
         cache=fake_cache,
     )
 
-    cache_key = service_module._cache_key("find it", 5, False, False, _TEST_OWNER_ID)
+    cache_key = service_module._cache_key("find it", 5, False, False, _TEST_OWNER_ID, None)
     assert fake_cache.get_calls == [cache_key]
     assert fake_cache.set_calls == [(cache_key, results)]
 
@@ -575,21 +575,21 @@ def test_search_caches_empty_result_on_miss(tmp_path):
         cache=fake_cache,
     )
 
-    cache_key = service_module._cache_key("anything", 5, False, False, _TEST_OWNER_ID)
+    cache_key = service_module._cache_key("anything", 5, False, False, _TEST_OWNER_ID, None)
     assert results == []
     assert fake_cache.set_calls == [(cache_key, [])]
 
 
 def test_cache_key_differs_by_rerank_and_expand_sections_flags():
-    base = service_module._cache_key("q", 5, False, False, _TEST_OWNER_ID)
-    assert service_module._cache_key("q", 5, True, False, _TEST_OWNER_ID) != base
-    assert service_module._cache_key("q", 5, False, True, _TEST_OWNER_ID) != base
-    assert service_module._cache_key("q", 10, False, False, _TEST_OWNER_ID) != base
+    base = service_module._cache_key("q", 5, False, False, _TEST_OWNER_ID, None)
+    assert service_module._cache_key("q", 5, True, False, _TEST_OWNER_ID, None) != base
+    assert service_module._cache_key("q", 5, False, True, _TEST_OWNER_ID, None) != base
+    assert service_module._cache_key("q", 10, False, False, _TEST_OWNER_ID, None) != base
 
 
 def test_cache_key_differs_by_owner_id():
-    base = service_module._cache_key("q", 5, False, False, _TEST_OWNER_ID)
-    assert service_module._cache_key("q", 5, False, False, uuid.uuid4()) != base
+    base = service_module._cache_key("q", 5, False, False, _TEST_OWNER_ID, None)
+    assert service_module._cache_key("q", 5, False, False, uuid.uuid4(), None) != base
 
 
 def test_search_never_returns_another_owners_vector_hit_regardless_of_raw_similarity(tmp_path):
@@ -762,3 +762,105 @@ def test_search_relevance_gate_disabled_when_max_relevant_distance_is_none(tmp_p
     )
 
     assert len(results) == 1
+
+
+def test_search_document_ids_restricts_to_that_document_only(tmp_path):
+    doc_a, doc_b = "doc-scope-a", "doc-scope-b"
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    _persist_and_index(doc_a, [_chunk(doc_a, 0)], [[1.0, 0.0, 0.0, 0.0]], faiss_index_store, _TEST_OWNER_ID)
+    _persist_and_index(doc_b, [_chunk(doc_b, 0)], [[1.0, 0.0, 0.0, 0.0]], faiss_index_store, _TEST_OWNER_ID)
+
+    fake_client = _FakeEmbeddingClient(vector=[1.0, 0.0, 0.0, 0.0])
+    results = search(
+        query="chunk text 0",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        retrieval_settings=_NO_RELEVANCE_GATE,
+        document_ids=[doc_a],
+    )
+
+    assert [r.document_id for r in results] == [doc_a]
+
+
+def test_search_document_ids_empty_list_returns_nothing_without_querying(tmp_path, monkeypatch):
+    document_id = "doc-scope-empty"
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    chunk = _chunk(document_id, 0)
+    _persist_and_index(document_id, [chunk], [[1.0, 0.0, 0.0, 0.0]], faiss_index_store, _TEST_OWNER_ID)
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("embedding/retrieval must not run when document_ids == []")
+
+    fake_client = _FakeEmbeddingClient(vector=[1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(fake_client, "embed", _fail_if_called)
+
+    results = search(
+        query="chunk text 0",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        document_ids=[],
+    )
+
+    assert results == []
+
+
+def test_search_document_ids_none_is_unrestricted(tmp_path):
+    # Unique text (not the "chunk text N" default) so BM25 can't also match unrelated chunks
+    # from other tests sharing the same _TEST_OWNER_ID (BM25 has no per-document filtering
+    # when document_ids is None, by design -- see ERP-012/014's existing scope note).
+    doc_a, doc_b = "doc-scope-none-a", "doc-scope-none-b"
+    chunk_a = _chunk(doc_a, 0, text="glorbnax hovertoads migrate every spring")
+    chunk_b = _chunk(doc_b, 0, text="glorbnax hovertoads nest near warm vents")
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+    _persist_and_index(doc_a, [chunk_a], [[1.0, 0.0, 0.0, 0.0]], faiss_index_store, _TEST_OWNER_ID)
+    _persist_and_index(doc_b, [chunk_b], [[0.9, 0.1, 0.0, 0.0]], faiss_index_store, _TEST_OWNER_ID)
+
+    fake_client = _FakeEmbeddingClient(vector=[1.0, 0.0, 0.0, 0.0])
+    results = search(
+        query="glorbnax hovertoads",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        retrieval_settings=_NO_RELEVANCE_GATE,
+        document_ids=None,
+    )
+
+    assert {r.document_id for r in results} == {doc_a, doc_b}
+
+
+def test_search_document_ids_excludes_another_owners_document(tmp_path):
+    other_owner_id = uuid.uuid4()
+    document_id = "doc-scope-other-owner"
+    faiss_index_store = OwnerFaissIndexStore(str(tmp_path), dimension=4)
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=other_owner_id, email=f"{other_owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    _persist_and_index(
+        document_id, [_chunk(document_id, 0)], [[1.0, 0.0, 0.0, 0.0]], faiss_index_store, other_owner_id
+    )
+
+    fake_client = _FakeEmbeddingClient(vector=[1.0, 0.0, 0.0, 0.0])
+    results = search(
+        query="chunk text 0",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        settings=EmbeddingSettings(dimension=4),
+        embedding_client=fake_client,
+        faiss_index_store=faiss_index_store,
+        document_ids=[document_id],
+    )
+
+    assert results == []

@@ -1,7 +1,7 @@
 """Persistence for multi-turn conversations."""
 
 import uuid
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -76,11 +76,23 @@ def get_conversation_owner_id(session: Session, conversation_id: uuid.UUID) -> u
 
 
 def append_message(
-    session: Session, conversation_id: uuid.UUID, role: str, content: str
+    session: Session,
+    conversation_id: uuid.UUID,
+    role: str,
+    content: str,
+    citations: list[dict[str, Any]] | None = None,
 ) -> ConversationMessageRecord:
-    """Append one message to `conversation_id`. Does not commit."""
+    """Append one message to `conversation_id`. Does not commit.
+
+    `citations` (ERP-080) is only ever set for an assistant turn -- a "user"-role message
+    has nothing to cite, so callers simply omit it (defaulting to `None`).
+    """
     message = ConversationMessageRecord(
-        id=uuid.uuid4(), conversation_id=conversation_id, role=role, content=content
+        id=uuid.uuid4(),
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+        citations=citations,
     )
     session.add(message)
     session.flush()

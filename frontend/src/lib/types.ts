@@ -28,6 +28,7 @@ export interface GenerationRequest {
   rerank?: boolean;
   expand_sections?: boolean;
   conversation_id?: string;
+  document_ids?: string[];
 }
 
 export type JobStatus = "pending" | "processing" | "done" | "failed";
@@ -60,10 +61,21 @@ export interface DocumentSummary {
   document_id: string;
   filename: string;
   created_at: string;
+  parsing_confidence: string;
 }
 
 export interface DocumentListResponse {
   documents: DocumentSummary[];
+}
+
+export interface ChunkDetail {
+  chunk_id: string;
+  document_id: string;
+  text: string;
+  section_path: string[];
+  page_start: number;
+  page_end: number;
+  source_filename: string;
 }
 
 export interface ConversationSummary {
@@ -83,6 +95,7 @@ export interface ConversationMessage {
   content: string;
   created_at: string;
   feedback: "up" | "down" | null;
+  citations: Citation[];
 }
 
 export interface ConversationHistoryResponse {

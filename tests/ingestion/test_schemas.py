@@ -42,7 +42,7 @@ def test_ingest_response_holds_chunks():
         section_path=[], page_start=1, page_end=1, char_count=2,
         parser_used="quality", source_filename="test.pdf",
     )
-    response = IngestResponse(document_id="doc1", chunks=[chunk])
+    response = IngestResponse(document_id="doc1", chunks=[chunk], parsing_confidence="high")
     assert response.chunks[0].chunk_id == "doc1-0"
 
 

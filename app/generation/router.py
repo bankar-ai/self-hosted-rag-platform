@@ -50,6 +50,7 @@ def query(
             rerank=query_request.rerank,
             expand_sections=query_request.expand_sections,
             conversation_id=query_request.conversation_id,
+            document_ids=query_request.document_ids,
         )
     except ConversationAccessDeniedError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
@@ -70,6 +71,7 @@ def _event_stream(query_request: GenerationQuery, owner_id: uuid.UUID) -> Iterat
         rerank=query_request.rerank,
         expand_sections=query_request.expand_sections,
         conversation_id=query_request.conversation_id,
+        document_ids=query_request.document_ids,
     ):
         yield _format_sse(event, data)
 

@@ -48,7 +48,7 @@ def test_fetch_identity_token_requests_metadata_server_with_audience():
     assert token == "fake-identity-token"
 
 
-def test_call_docling_service_posts_pdf_and_returns_parsed_pages(tmp_path):
+def test_call_docling_service_posts_pdf_and_returns_parsed_pages_and_confidence(tmp_path):
     pdf_path = tmp_path / "doc.pdf"
     pdf_path.write_bytes(b"%PDF-fake-content")
 
@@ -56,12 +56,15 @@ def test_call_docling_service_posts_pdf_and_returns_parsed_pages(tmp_path):
         if "identity" in str(request.url):
             return httpx.Response(200, text="fake-token")
         assert request.headers["Authorization"] == "Bearer fake-token"
-        return httpx.Response(200, json=[{"text": "hello", "page_number": 1}])
+        return httpx.Response(
+            200, json={"pages": [{"text": "hello", "page_number": 1}], "confidence": "good"}
+        )
 
     with _stub_httpx_client(handler):
-        result = call_docling_service(str(pdf_path), _settings())
+        pages, confidence = call_docling_service(str(pdf_path), _settings())
 
-    assert result == [{"text": "hello", "page_number": 1}]
+    assert pages == [{"text": "hello", "page_number": 1}]
+    assert confidence == "good"
 
 
 def test_call_docling_service_raises_on_non_200_response(tmp_path):

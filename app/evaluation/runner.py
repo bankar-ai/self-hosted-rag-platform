@@ -73,6 +73,7 @@ def run_evaluation(
             source_filename=eval_document.label,
             chunks=chunks,
             owner_id=owner_id,
+            parsing_confidence="high",
             embedding_client=embedding_client,
             faiss_index_store=faiss_index_store,
         )

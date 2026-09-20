@@ -94,6 +94,113 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **A second follow-up batch (ERP-075 through ERP-081, plus ERP-083) built and committed to a
+  branch, not yet merged/deployed (2026-09-19)**: closes out the remaining items from the punch
+  list assembled after ERP-050/ERP-067-074 (ERP-082 OIDC self-service linking and DOCX/PPTX
+  ingestion explicitly excluded, per user instruction). **ERP-075** — copy button for a full Q+A
+  turn, and per-row copy on the sidebar's conversation list (fetched on demand). **ERP-081** —
+  `SourcePanel` (react-markdown, ERP-067) is now lazy-loaded; main bundle 581KB → 287KB
+  minified. **ERP-077** — a `[n]` citation marker inside `**bold**` text is now clickable (the
+  bold-rendering branch previously never routed through the citation logic at all). **ERP-079**
+  — `SourcePanel` is a real dialog now (`role="dialog"`, focus trap, Escape-to-close, focus
+  returns to the triggering citation on close). **ERP-078** — sidebar and source panel both
+  become overlays below the `md` breakpoint instead of a fixed three-column layout. **ERP-080**
+  — `conversation_messages` gained a nullable `citations` JSONB column (migration
+  `0e0c25ec1392`); reloaded conversation history now keeps working, clickable citation markers
+  instead of losing them. **ERP-076** — the Cloud Run `docling-service`'s `/parse` response now
+  also returns Docling's own document-level confidence grade (`mean_grade`); new
+  `documents.parsing_confidence` column (migration `4c6edf78ba5c`, backfilled `"high"`),
+  rendered as a badge next to each document in the Documents page and Chat sidebar — lets a
+  caller tell at a glance whether a document (e.g. scanned/blurry) parsed reliably. **ERP-083**
+  — code-complete but **not deployed**: a new isolated CI-only Modal app
+  (`deploy/modal_ollama_ci.py`, deliberately separate from production after production's real
+  2026-09-17 free-credit-threshold incident), `--fail-under-*` flags on both evaluation CLIs, and
+  a new daily-scheduled `evaluation-gate.yml` workflow — but deploying the Modal app, attaching a
+  payment method, and adding the `CI_MODAL_OLLAMA_URL` repo secret are left as manual follow-up
+  (live/billable/credential actions), documented in `D:\github-projects\gcp-deployment-tracker.md`'s
+  new "CI evaluation gate" section. Built in worktree `.claude/worktrees/erp075-083-followups`
+  (branch `worktree-erp075-083-followups`, based on `develop`), one commit per ticket. Verified:
+  ruff/mypy clean, backend 516 → 528 tests passing, frontend 55 → 60 tests passing,
+  `tsc`/`oxlint`/`vite build` clean. **Not yet live-verified in a browser** (no browser-automation
+  tool available this session) and **not yet merged or deployed** — see the session log
+  (`.ai/sessions/2026-09-19-erp075-083-live-feedback-followups.md`) for full details and next
+  steps.
+- **A follow-up batch (ERP-067 through ERP-074) closed out live feedback from ERP-050's own
+  first use (2026-09-19)**, deployed and live-verified: **ERP-074** — `Button` gained a
+  `variant` prop, fixing invisible Delete/Retry/Dismiss text (a Tailwind cascade-order conflict
+  between a hardcoded default color and per-call-site overrides). **ERP-067** — `SourcePanel`
+  now renders chunk text via `react-markdown`/`rehype-raw`/`rehype-sanitize` instead of literal
+  `**`/`#####`/`<mark>` syntax (bundle grew ~285KB→~580KB minified, flagged as a follow-up to
+  lazy-load `SourcePanel`, not a blocker). **ERP-068** — copy-to-clipboard for a message, a
+  conversation, and a source panel's text via one shared `CopyButton`. **ERP-069** — a confirmed
+  live hallucination (a fabricated date not in the cited source) fixed by tightening
+  `SYSTEM_PROMPT` to forbid stating any specific fact not verbatim present in context —
+  **live-reproduced the exact failing conversation against production** before/after, confirming
+  the fix. **ERP-070/ERP-073** — Documents-page uploads now stage behind an explicit "Upload"
+  button instead of starting immediately, and a failed upload *transfer* shows a dismissible
+  "Try again" state instead of silently vanishing. **ERP-071** — bulk delete + a
+  `window.confirm` gate before any delete. **ERP-072** — new `DELETE /ingestion/jobs/{job_id}`
+  actually cleans up a dismissed failed job's temp file (previously leaked disk space
+  indefinitely) — **live-verified via SSH**: uploaded a file that fails ingestion, confirmed its
+  temp file existed on the VM, dismissed it via the new endpoint, confirmed via a second SSH
+  check the file and its parent directory were gone. Built via subagent-driven development (7
+  tasks); one task (ERP-072's backend half) went through a fix round after task review caught an
+  unauthorized retry-loop-plus-unrelated-function-edit deviation chasing a Windows-only test
+  flake, reverted to the plan's simple code with the flake fixed at its actual root instead. The
+  final whole-branch review then caught and fixed a real Critical bug before merge: the plan's
+  own `handleRetry` wiring called the new backend-deleting dismiss function, which raced
+  `retry_job`'s deliberate reuse of the same temp file — starting a retry could delete the file
+  the retry itself needed, an unrecoverable data-loss bug in the pre-existing ERP-053 retry
+  feature — fixed by splitting dismiss into a local-only (retry-safe) cleanup and the full
+  backend-deleting version (explicit Dismiss only), plus two related Important fixes (a failed
+  bulk-delete silently looking like it succeeded in the UI; a network error leaving delete rows
+  stuck disabled forever). Backend 508→516 tests, frontend 36→55 tests (`DocumentsPage.test.tsx`
+  is this page's first test file). Merged to `develop` via PR #50.
+- **ERP-050 (Visual/UX Redesign) is Done, deployed, and live-verified (2026-09-19)**: a caller
+  can now click any citation — the citation list below an answer, or (new) a clickable inline
+  `[n]` marker in the answer text itself — to open a right-hand source panel showing the exact
+  chunk text it came from, via a new owner-scoped `GET /documents/{document_id}/chunks/{chunk_id}`
+  endpoint (chunk text fetched on demand, never embedded in `Citation`). The Chat page is now a
+  three-pane layout (sidebar — extracted into its own `Sidebar` component — / chat / source
+  detail, the third column appearing only when a citation is selected), plus a small cosmetic
+  accent-color pass via a new Tailwind v4 `@theme` block. Deliberately out of scope: PDF
+  storage/viewer (ingestion never persists original PDF bytes), sibling/section-expansion
+  chunks in the panel, a NotebookLM-style "Studio" generated-artifacts pane. Built via
+  subagent-driven development (8 tasks, each independently task-reviewed) plus a final
+  whole-branch review (most capable model) that caught and fixed a real pre-merge bug: a
+  stale-response race in `SourcePanel` where rapidly switching citations could silently show
+  one citation's text under a different citation's header — fixed with a `cancelled`-flag guard
+  and a moved-outside-the-fetch-switch metadata header, both verified by a scoped re-review.
+  Backend 502 → 508 tests passing, ruff/mypy clean; frontend 29 → 36 tests passing,
+  `tsc`/`vite build`/`oxlint` clean. **Live-verified against production**: real document
+  uploaded, a real generation answer's citation resolved correctly through the new endpoint,
+  unknown-chunk and cross-owner requests both 404, and deleting the source document correctly
+  404s its chunk endpoint too (the panel's "no longer available" trigger). Deployed via `git
+  pull` + `systemctl restart` (no migration) and `vercel --prod --scope bankar-ai` (the
+  `--scope` flag was newly required this session — a bare `vercel --prod` returned "Not
+  authorized" despite `vercel whoami` succeeding). Merged to `develop` via PR #49. Deferred
+  follow-ups (not blockers): citation markers inside bold text aren't clickable, no responsive
+  layout for narrow viewports, no keyboard/focus/aria affordances on the panel, and citations
+  don't survive a conversation-history reload (pre-existing gap, made more costly by this
+  feature).
+- **ERP-044 (Document-Scoped Retrieval) is Done, deployed, and live-verified (2026-09-18)**:
+  a caller can now scope a retrieval/generation query to a chosen subset of their own documents
+  via a new `document_ids` parameter, filtered before RRF fusion on both retrieval legs — true
+  search-time filtering on FAISS via `IDSelectorBatch`/`SearchParameters(sel=...)` (verified
+  experimentally against real `faiss` before writing production code, not a weaker post-hoc
+  filter), and a SQL `IN` clause on BM25. `document_ids=None` (omitted) is unchanged
+  "search everything owned" behavior; `document_ids=[]` (explicit) short-circuits to no results.
+  Frontend: the Chat sidebar's document list gained a checkbox per document (checked by default,
+  opt-out model), wired into every query. Backend 485 → 502 tests passing, ruff/mypy clean;
+  frontend `tsc`/`vite build`/`oxlint` clean, 29 vitest tests passing (no new tests for
+  `ChatPage.tsx`, which had no prior coverage — verified live instead). **Live-verified against
+  the production deployment**: two documents with mutually-exclusive content uploaded; scoped
+  retrieval to one, the other, both (unscoped), and explicitly-empty all matched the design
+  exactly; a full streamed generation query scoped to one document produced a correct, grounded,
+  cited answer. Test user and its data deleted afterward via the admin API. Deployed via `git
+  pull` + `systemctl restart` on the VM (no migration) and `vercel --prod`. Merged to `develop`
+  via PR #48. **ERP-050 (visual/UX redesign) remains open**, deliberately deferred as its own,
+  separately-scoped design effort — see `.ai/tickets/ERP-050.md`.
 - **ERP-066 (2026-09-18)**: `DELETE /admin/users/{id}` 500'd for any user with a rated message
   -- a real regression from ERP-045 (below), caught during this session's own post-deploy
   cleanup, not a user report. `delete_user_and_owned_data` didn't know about the new

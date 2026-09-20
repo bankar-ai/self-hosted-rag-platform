@@ -198,7 +198,7 @@ def test_generate_parses_mixed_single_and_comma_separated_citations(monkeypatch)
 def test_generate_passes_retrieval_params_through(monkeypatch):
     captured = {}
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         captured["args"] = (query, top_k, owner_id, rerank, expand_sections)
         return [_chunk("c1")]
 
@@ -274,7 +274,7 @@ def test_generate_second_turn_rewrites_query_using_history(monkeypatch):
 
     captured_retrieval_query = {}
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         captured_retrieval_query["query"] = query
         return [_chunk("c1")]
 
@@ -428,6 +428,42 @@ def test_get_conversation_history_returns_all_messages_oldest_first():
     assert [m.role for m in history.messages] == ["user", "assistant"]
 
 
+def test_get_conversation_history_includes_persisted_citations():
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        append_message(session, conversation_id, "user", "what is X?")
+        append_message(
+            session,
+            conversation_id,
+            "assistant",
+            "X is Y [1]",
+            citations=[
+                {
+                    "chunk_id": "c1",
+                    "document_id": "d1",
+                    "section_path": ["Intro"],
+                    "page_start": 1,
+                    "page_end": 1,
+                    "source_filename": "doc.pdf",
+                    "score": 0.9,
+                    "reranked": False,
+                }
+            ],
+        )
+        session.commit()
+
+    history = get_conversation_history(conversation_id, _TEST_OWNER_ID)
+
+    assert history is not None
+    user_message, assistant_message = history.messages
+    assert user_message.citations == []
+    assert len(assistant_message.citations) == 1
+    assert assistant_message.citations[0].chunk_id == "c1"
+
+
 def test_generate_stream_stateless_yields_tokens_then_citations_then_done(monkeypatch):
     # Only c1 is cited ("[1]" appears in the streamed answer); c2 was in context but never
     # referenced, so ERP-055 excludes it from the citations event.
@@ -565,7 +601,7 @@ def test_generate_stream_second_turn_rewrites_query_using_history(monkeypatch):
 
     captured_retrieval_query = {}
 
-    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False):
+    def _fake_search(query, top_k, owner_id, rerank=False, expand_sections=False, document_ids=None):
         captured_retrieval_query["query"] = query
         return [_chunk("c1")]
 

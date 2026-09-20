@@ -15,6 +15,7 @@ def embed_and_persist(
     source_filename: str,
     chunks: list[Chunk],
     owner_id: uuid.UUID,
+    parsing_confidence: str = "high",
     settings: EmbeddingSettings | None = None,
     embedding_client: EmbeddingClient | None = None,
     faiss_index_store: OwnerFaissIndexStore | None = None,
@@ -38,7 +39,9 @@ def embed_and_persist(
 
     session_factory = get_session_factory()
     with session_factory() as session:
-        records = save_document_and_chunks(session, document_id, source_filename, chunks, owner_id)
+        records = save_document_and_chunks(
+            session, document_id, source_filename, chunks, owner_id, parsing_confidence
+        )
         vector_ids = [record.vector_id for record in records]
         session.commit()
 
