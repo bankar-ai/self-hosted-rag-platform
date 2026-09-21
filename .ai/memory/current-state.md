@@ -94,6 +94,20 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **ERP-085 (mobile usability verification) found 4 real bugs on a real phone, not yet fixed
+  (2026-09-21)**: live-verified `bankar-ai-self-hosted-rag-platform.vercel.app` on a real
+  Android/Chrome device per its acceptance criteria. Found: (1) the top nav/header wraps and
+  visually collides with the page title on narrow viewports; (2) reaching Documents/email/Log
+  out requires horizontally scrolling the whole page — a direct violation of ERP-078's own "no
+  horizontal scroll of the page body" criterion, since the header was apparently never covered
+  by that responsive pass; (3) `SourcePanel`'s chunk text overflows horizontally instead of
+  wrapping; (4) `SourcePanel`'s Copy/Close controls are off-screen by default as a result of
+  (3) — a real tap-target reachability problem. The sidebar overlay itself (New chat, recent
+  conversations, document checklist) was fully usable, no issues. Likely shared root cause:
+  fixed-width/`nowrap` flex rows in the header and `SourcePanel` never given
+  `flex-wrap`/`min-w-0`/`break-words`. Fix work deferred to next session (weekly usage quota
+  ~80% used). Session log: `.ai/sessions/2026-09-21-mobile-usability-verification.md`; ticket:
+  `.ai/tickets/ERP-085.md`.
 - **A second follow-up batch (ERP-075 through ERP-081, plus ERP-083) built and committed to a
   branch, not yet merged/deployed (2026-09-19)**: closes out the remaining items from the punch
   list assembled after ERP-050/ERP-067-074 (ERP-082 OIDC self-service linking and DOCX/PPTX
