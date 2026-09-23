@@ -123,7 +123,7 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       onKeyDown={handleKeyDown}
       className="fixed inset-0 z-40 flex w-full flex-col overflow-x-hidden overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 focus:outline-none md:static md:inset-auto md:z-auto md:w-80 md:shrink-0"
     >
-      <div className="sticky top-0 z-10 mb-3 flex items-center justify-between bg-slate-50">
+      <div className="sticky top-0 z-10 pb-3 flex items-center justify-between bg-slate-50">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Source</p>
         <div className="flex items-center gap-1">
           {state.status === "loaded" && (
