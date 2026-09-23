@@ -64,6 +64,16 @@ describe("SourcePanel", () => {
     expect(screen.getByText(/relevance score: 0\.870/i)).toBeInTheDocument();
   });
 
+  it("contains horizontal overflow instead of letting the whole panel scroll sideways", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    const { container } = render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    const panel = container.querySelector('[role="dialog"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("overflow-x-hidden");
+  });
+
   it("shows a retryable error on a network failure, and retries on click", async () => {
     const fetchMock = vi
       .fn()
