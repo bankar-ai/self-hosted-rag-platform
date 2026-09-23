@@ -94,6 +94,22 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **Four new planning tickets from live feedback + observability/evaluation gaps, not yet
+  started (2026-09-23)**: **ERP-086** — root-caused a live 503 on PDF ingestion to the Cloud Run
+  docling service being OOM-killed on a large scanned document (`--memory 4Gi` exceeded,
+  confirmed via `gcloud logging read`, not inferred); fix options documented, none applied.
+  **ERP-087** — dashboard for the existing golden-dataset evaluation run history
+  (`evaluation_runs`/`generation_evaluation_runs`); confirmed via live web search that Grafana
+  Cloud's free tier supports a Postgres data source natively. **ERP-088** — design-only ticket
+  for evaluating live production traffic instead of just the fixed 4-query golden dataset
+  (inline judging vs. async sampling vs. existing thumbs up/down feedback), decision deferred.
+  **ERP-089** — latency-breakdown dashboard panel using telemetry ERP-028/042 already collect
+  but never surfaced. **ERP-090** — all-services up/down dashboard; Cloud Run docling and Modal
+  Ollama currently emit no telemetry to Grafana Cloud at all (that gap is why ERP-086 needed
+  direct `gcloud` access instead of Grafana). Researched live: Grafana Cloud Synthetic
+  Monitoring (100k free API-test executions/month, same platform) recommended over UptimeRobot
+  (separate tool). Session log:
+  `.ai/sessions/2026-09-23-observability-and-evaluation-planning.md`.
 - **ERP-085 (mobile usability verification) found 4 real bugs on a real phone, not yet fixed
   (2026-09-21)**: live-verified `bankar-ai-self-hosted-rag-platform.vercel.app` on a real
   Android/Chrome device per its acceptance criteria. Found: (1) the top nav/header wraps and
