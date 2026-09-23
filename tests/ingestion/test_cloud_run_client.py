@@ -99,6 +99,24 @@ def test_call_docling_service_raises_friendly_message_on_non_200_response(tmp_pa
     assert "Service Unavailable" not in message
 
 
+def test_call_docling_service_raises_generic_message_on_4xx_response(tmp_path):
+    pdf_path = tmp_path / "doc.pdf"
+    pdf_path.write_bytes(b"%PDF-fake-content")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "identity" in str(request.url):
+            return httpx.Response(200, text="fake-token")
+        return httpx.Response(404, text="Not Found")
+
+    with _stub_httpx_client(handler):
+        with pytest.raises(DoclingServiceError) as exc_info:
+            call_docling_service(str(pdf_path), _settings())
+
+    message = str(exc_info.value)
+    assert "too large or complex" not in message
+    assert "couldn't process this file" in message
+
+
 def test_call_docling_service_raises_when_url_not_configured(tmp_path):
     pdf_path = tmp_path / "doc.pdf"
     pdf_path.write_bytes(b"%PDF-fake-content")
