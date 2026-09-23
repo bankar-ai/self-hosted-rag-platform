@@ -94,37 +94,81 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
-- **A second follow-up batch (ERP-075 through ERP-081, plus ERP-083) built and committed to a
-  branch, not yet merged/deployed (2026-09-19)**: closes out the remaining items from the punch
-  list assembled after ERP-050/ERP-067-074 (ERP-082 OIDC self-service linking and DOCX/PPTX
-  ingestion explicitly excluded, per user instruction). **ERP-075** — copy button for a full Q+A
-  turn, and per-row copy on the sidebar's conversation list (fetched on demand). **ERP-081** —
-  `SourcePanel` (react-markdown, ERP-067) is now lazy-loaded; main bundle 581KB → 287KB
-  minified. **ERP-077** — a `[n]` citation marker inside `**bold**` text is now clickable (the
-  bold-rendering branch previously never routed through the citation logic at all). **ERP-079**
-  — `SourcePanel` is a real dialog now (`role="dialog"`, focus trap, Escape-to-close, focus
-  returns to the triggering citation on close). **ERP-078** — sidebar and source panel both
-  become overlays below the `md` breakpoint instead of a fixed three-column layout. **ERP-080**
+- **ERP-085 and half of ERP-086 fixed via `superpowers:subagent-driven-development`
+  (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed mobile bugs fixed and Done:
+  `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav collision and page-level
+  horizontal scroll), and `SourcePanel.tsx`'s `<aside>` gained `overflow-x-hidden` (the CSS
+  spec's "one non-visible axis forces the other to `auto`" rule was silently making the whole
+  panel horizontally scrollable) plus `break-words` and a `sticky top-0` header row so Copy/
+  Close stay reachable. Corroborated by 2 more real external users hitting the same header bug
+  before the fix landed. **ERP-086** — the friendly-error-message half is done
+  (`app/ingestion/cloud_run_client.py` now raises a user-safe message instead of the raw httpx
+  503 text on an `HTTPStatusError`); the `--memory 8Gi` Cloud Run redeploy half is documented
+  (`deploy/cloud_run_docling/README.md`) but not yet run — it's a live/billable GCP change
+  pending explicit user confirmation. Both tickets built as one plan (4 tasks, each
+  independently reviewed and Approved), full backend suite (529 passed) and frontend suite (both
+  new tests + `tsc`/oxlint/vite build) clean.
+- **Four new planning tickets from live feedback + observability/evaluation gaps, not yet
+  started (2026-09-23)**: **ERP-087** — dashboard for the existing golden-dataset evaluation run
+  history (`evaluation_runs`/`generation_evaluation_runs`); confirmed via live web search that
+  Grafana Cloud's free tier supports a Postgres data source natively. **ERP-088** — design-only
+  ticket for evaluating live production traffic instead of just the fixed 4-query golden dataset
+  (inline judging vs. async sampling vs. existing thumbs up/down feedback), decision deferred.
+  **ERP-089** — latency-breakdown dashboard panel using telemetry ERP-028/042 already collect
+  but never surfaced. **ERP-090** — all-services up/down dashboard; Cloud Run docling and Modal
+  Ollama currently emit no telemetry to Grafana Cloud at all (that gap is why ERP-086 needed
+  direct `gcloud` access instead of Grafana). Researched live: Grafana Cloud Synthetic
+  Monitoring (100k free API-test executions/month, same platform) recommended over UptimeRobot
+  (separate tool). Session log:
+  `.ai/sessions/2026-09-23-observability-and-evaluation-planning.md`.
+- **A second follow-up batch (ERP-075 through ERP-081, ERP-083) plus two live-verification bug
+  fixes (ERP-076 redeploy gap, new ERP-084) are all deployed and live-verified (2026-09-19 —
+  2026-09-20)**: closes out the remaining items from the punch list assembled after
+  ERP-050/ERP-067-074 (ERP-082 OIDC self-service linking and DOCX/PPTX ingestion explicitly
+  excluded, per user instruction). **ERP-075** — copy button for a full Q+A turn, and per-row
+  copy on the sidebar's conversation list (fetched on demand). **ERP-081** — `SourcePanel`
+  (react-markdown, ERP-067) is now lazy-loaded; main bundle 581KB → 287KB minified. **ERP-077**
+  — a `[n]` citation marker inside `**bold**` text is now clickable. **ERP-079** — `SourcePanel`
+  is a real dialog now (`role="dialog"`, focus trap, Escape-to-close, focus returns to the
+  triggering citation on close) — not yet manually browser-verified, deprioritized by the user.
+  **ERP-078** — sidebar and source panel both become overlays below the `md` breakpoint instead
+  of a fixed three-column layout — same deprioritized-verification status as ERP-079 (now
+  actually browser-verified for real, via ERP-085 above). **ERP-080**
   — `conversation_messages` gained a nullable `citations` JSONB column (migration
-  `0e0c25ec1392`); reloaded conversation history now keeps working, clickable citation markers
-  instead of losing them. **ERP-076** — the Cloud Run `docling-service`'s `/parse` response now
-  also returns Docling's own document-level confidence grade (`mean_grade`); new
-  `documents.parsing_confidence` column (migration `4c6edf78ba5c`, backfilled `"high"`),
-  rendered as a badge next to each document in the Documents page and Chat sidebar — lets a
-  caller tell at a glance whether a document (e.g. scanned/blurry) parsed reliably. **ERP-083**
-  — code-complete but **not deployed**: a new isolated CI-only Modal app
-  (`deploy/modal_ollama_ci.py`, deliberately separate from production after production's real
-  2026-09-17 free-credit-threshold incident), `--fail-under-*` flags on both evaluation CLIs, and
-  a new daily-scheduled `evaluation-gate.yml` workflow — but deploying the Modal app, attaching a
-  payment method, and adding the `CI_MODAL_OLLAMA_URL` repo secret are left as manual follow-up
-  (live/billable/credential actions), documented in `D:\github-projects\gcp-deployment-tracker.md`'s
-  new "CI evaluation gate" section. Built in worktree `.claude/worktrees/erp075-083-followups`
-  (branch `worktree-erp075-083-followups`, based on `develop`), one commit per ticket. Verified:
-  ruff/mypy clean, backend 516 → 528 tests passing, frontend 55 → 60 tests passing,
-  `tsc`/`oxlint`/`vite build` clean. **Not yet live-verified in a browser** (no browser-automation
-  tool available this session) and **not yet merged or deployed** — see the session log
-  (`.ai/sessions/2026-09-19-erp075-083-live-feedback-followups.md`) for full details and next
-  steps.
+  `0e0c25ec1392`); reloaded conversation history keeps working, clickable citation markers —
+  **live-verified twice** (a scripted API round-trip test, and the user reloading a real
+  conversation in-browser). **ERP-076** — the Cloud Run `docling-service`'s `/parse` response
+  now also returns Docling's own document-level confidence grade (`mean_grade`); new
+  `documents.parsing_confidence` column (migration `4c6edf78ba5c`, backfilled `"high"`), rendered
+  as a badge in the Documents page and Chat sidebar. **ERP-083** — CI evaluation-quality gate,
+  a new isolated CI-only Modal app (`deploy/modal_ollama_ci.py`, deliberately separate from
+  production after production's real 2026-09-17 free-credit-threshold incident), `--fail-under-*`
+  flags on both evaluation CLIs, and `evaluation-gate.yml` (`workflow_dispatch`-only per a
+  2026-09-20 cost decision, PR #52 — no daily schedule). Full deployment chain: `develop` → `main`
+  promotion (PR #53), Modal app deployed + payment method attached + `CI_MODAL_OLLAMA_URL` secret
+  set, VM `git pull`/`alembic upgrade head`/`systemctl restart` (hit and worked around the
+  documented `.env`-unquoted-`&`-breaks-bash-source gotcha via a base64-delivered Python script),
+  Vercel auto-deployed on the `main` push. **Two real bugs found via live-verification, both
+  fixed same-session**: (1) ERP-076's own required Cloud Run redeploy was missed on the first
+  pass — the main app's updated `call_docling_service` expected the Cloud Run service's new
+  `{"pages":..., "confidence":...}` shape, but Cloud Run was still serving old code returning a
+  bare list, breaking every OCR-fallback document with `TypeError: list indices must be integers
+  or slices, not str`; fixed by actually running the Cloud Run redeploy (no code change needed,
+  new revision `-00003`). (2) New ticket **ERP-084**: a model-bundled `[1, 3, 4]`-style citation
+  marker was never clickable (frontend regex only ever matched single `[n]`, even though the
+  backend has tolerated bundling for citation extraction since ERP-065) and `citation.section_path`
+  showed raw `**`/`<mark>` syntax (it's plain-text-rendered, never markdown-rendered, unlike the
+  chunk body) — both pre-existing gaps, not regressions, fixed and live-verified (PR #55). The
+  evaluation gate itself also needed one fix after its first real run (PR #54): `GENERATION_MODEL`
+  wasn't set, so it fell back to the code default `"qwen3"`, not one of the two models baked into
+  the CI Modal image — fixed, second run passed both quality gates. CI-config/frontend-only fixes
+  (PRs #54, #55) went straight to `main`, skipping `develop`, since neither touched application
+  code and both were needed live immediately. Verified throughout: ruff/mypy clean, backend
+  516 → 528 tests passing, frontend 55 → 62 tests passing, `tsc`/`oxlint`/`vite build` clean.
+  Manual browser verification of ERP-078/ERP-079 specifically remains undone — user explicitly
+  deprioritized it, no urgency. Session logs:
+  `.ai/sessions/2026-09-19-erp075-083-live-feedback-followups.md`,
+  `.ai/sessions/2026-09-20-erp083-deploy-and-post-deploy-fixes.md`.
 - **A follow-up batch (ERP-067 through ERP-074) closed out live feedback from ERP-050's own
   first use (2026-09-19)**, deployed and live-verified: **ERP-074** — `Button` gained a
   `variant` prop, fixing invisible Delete/Retry/Dismiss text (a Tailwind cascade-order conflict

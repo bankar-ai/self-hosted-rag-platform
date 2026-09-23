@@ -13,11 +13,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200 bg-white px-6 py-3">
         <span className="text-lg font-semibold tracking-tight text-slate-900">
           Self-Hosted RAG Platform
         </span>
-        <nav className="flex items-center gap-3">
+        <nav className="flex flex-wrap items-center gap-3">
           <NavLink to="/chat" className={navLinkClass}>
             Chat
           </NavLink>

@@ -64,6 +64,30 @@ describe("SourcePanel", () => {
     expect(screen.getByText(/relevance score: 0\.870/i)).toBeInTheDocument();
   });
 
+  it("contains horizontal overflow instead of letting the whole panel scroll sideways", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    const { container } = render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    const panel = container.querySelector('[role="dialog"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("overflow-x-hidden");
+  });
+
+  it("uses padding, not margin, for the sticky header's bottom spacing", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    const { container } = render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    const header = container.querySelector(".sticky");
+    expect(header).not.toBeNull();
+    // Margin is transparent, so as content scrolls under the sticky header it would show
+    // through the gap directly beneath it -- padding keeps the header's background covering
+    // that space instead.
+    expect(header?.className).toContain("pb-3");
+    expect(header?.className).not.toContain("mb-3");
+  });
+
   it("shows a retryable error on a network failure, and retries on click", async () => {
     const fetchMock = vi
       .fn()
@@ -230,6 +254,39 @@ describe("SourcePanel", () => {
 
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("strips markdown/HTML decoration from the section_path breadcrumb", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            chunk_id: "doc1-0",
+            document_id: "doc1",
+            text: "Some text.",
+            section_path: ["**Prevent Falls**", "<mark>Ladder Falls</mark>"],
+            page_start: 4,
+            page_end: 5,
+            source_filename: "simple.pdf",
+          }),
+          { status: 200 }
+        )
+      )
+    );
+
+    render(
+      <SourcePanel
+        citation={{ ...citation, section_path: ["**Prevent Falls**", "<mark>Ladder Falls</mark>"] }}
+        onClose={() => {}}
+      />
+    );
+
+    await waitFor(() => expect(screen.getByText("Some text.")).toBeInTheDocument());
+
+    expect(screen.getByText(/Prevent Falls \/ Ladder Falls/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*/)).toBeNull();
+    expect(screen.queryByText(/<mark>/)).toBeNull();
   });
 
   it("sanitizes a disallowed tag instead of rendering it", async () => {

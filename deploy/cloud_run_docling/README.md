@@ -15,12 +15,16 @@ dependency any more (that's the whole point of this service existing).
 
 ## Deploy
 
+`--memory 8Gi` (raised from 4Gi 2026-09-23, ERP-086): a large scanned document OOM-killed the
+container at 4Gi in production, surfacing as a raw 503 to the user. See
+`.ai/tickets/ERP-086.md`.
+
 ```
 gcloud run deploy self-hosted-rag-platform-docling \
   --source deploy/cloud_run_docling \
   --region us-central1 \
   --no-allow-unauthenticated \
-  --memory 4Gi \
+  --memory 8Gi \
   --cpu 2 \
   --timeout 600 \
   --concurrency 1 \

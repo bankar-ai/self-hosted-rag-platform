@@ -67,6 +67,18 @@ def call_docling_service(
             response.raise_for_status()
             result: dict[str, Any] = response.json()
             return result["pages"], result["confidence"]
+    except httpx.HTTPStatusError as exc:
+        logger.exception("Docling Cloud Run service returned an error response")
+        if exc.response.status_code >= 500:
+            raise DoclingServiceError(
+                "This document could not be processed by the quality parser -- it may be too "
+                "large or complex (e.g. a long scanned document). Try a smaller file, or contact "
+                "support if this keeps happening."
+            ) from exc
+        raise DoclingServiceError(
+            "The document parsing service couldn't process this file right now. Please try "
+            "again, or contact support if this keeps happening."
+        ) from exc
     except httpx.HTTPError as exc:
         logger.exception("Docling Cloud Run service call failed")
         raise DoclingServiceError(str(exc)) from exc
