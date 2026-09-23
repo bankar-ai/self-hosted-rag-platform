@@ -94,20 +94,25 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
-- **ERP-085 and half of ERP-086 fixed via `superpowers:subagent-driven-development`
-  (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed mobile bugs fixed and Done:
-  `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav collision and page-level
-  horizontal scroll), and `SourcePanel.tsx`'s `<aside>` gained `overflow-x-hidden` (the CSS
-  spec's "one non-visible axis forces the other to `auto`" rule was silently making the whole
-  panel horizontally scrollable) plus `break-words` and a `sticky top-0` header row so Copy/
-  Close stay reachable. Corroborated by 2 more real external users hitting the same header bug
-  before the fix landed. **ERP-086** — the friendly-error-message half is done
-  (`app/ingestion/cloud_run_client.py` now raises a user-safe message instead of the raw httpx
-  503 text on an `HTTPStatusError`); the `--memory 8Gi` Cloud Run redeploy half is documented
-  (`deploy/cloud_run_docling/README.md`) but not yet run — it's a live/billable GCP change
-  pending explicit user confirmation. Both tickets built as one plan (4 tasks, each
-  independently reviewed and Approved), full backend suite (529 passed) and frontend suite (both
-  new tests + `tsc`/oxlint/vite build) clean.
+- **ERP-085 and ERP-086 both Done, built via `superpowers:subagent-driven-development` and
+  merged to `develop` via PR #58 (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed
+  mobile bugs fixed: `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav
+  collision and page-level horizontal scroll), and `SourcePanel.tsx`'s `<aside>` gained
+  `overflow-x-hidden` (the CSS spec's "one non-visible axis forces the other to `auto`" rule was
+  silently making the whole panel horizontally scrollable) plus `break-words` and a `sticky
+  top-0`/`pb-3` header row so Copy/Close stay reachable. Corroborated by 2 more real external
+  users hitting the same header bug before the fix landed; the ticket honestly notes the fix
+  itself was only verified via `vitest`/jsdom, not yet real-device-reconfirmed. **ERP-086** —
+  `app/ingestion/cloud_run_client.py` now raises a friendly message only for `HTTPStatusError`s
+  with `status_code >= 500` (a final-review finding caught the first version over-applying "too
+  large or complex" wording to 4xx config/auth errors too; 4xx now gets a neutral message
+  instead), and the Cloud Run docling service was redeployed with `--memory 8Gi` (was 4Gi) —
+  confirmed live via `gcloud run services describe` (new revision `-00004-68w`, serving 100% of
+  traffic). Both tickets built as one plan (4 implementation tasks + doc closeout, each
+  independently reviewed and Approved, plus a final whole-branch review that caught and fixed 2
+  Important findings), full backend suite (530 passed) and frontend suite (65 passed, `tsc`/
+  oxlint/vite build clean). Session log:
+  `.ai/sessions/2026-09-23-erp085-086-live-bugfixes.md`.
 - **Four new planning tickets from live feedback + observability/evaluation gaps, not yet
   started (2026-09-23)**: **ERP-087** — dashboard for the existing golden-dataset evaluation run
   history (`evaluation_runs`/`generation_evaluation_runs`); confirmed via live web search that
