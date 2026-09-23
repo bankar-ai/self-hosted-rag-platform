@@ -94,6 +94,33 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **ERP-085 and half of ERP-086 fixed via `superpowers:subagent-driven-development`
+  (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed mobile bugs fixed and Done:
+  `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav collision and page-level
+  horizontal scroll), and `SourcePanel.tsx`'s `<aside>` gained `overflow-x-hidden` (the CSS
+  spec's "one non-visible axis forces the other to `auto`" rule was silently making the whole
+  panel horizontally scrollable) plus `break-words` and a `sticky top-0` header row so Copy/
+  Close stay reachable. Corroborated by 2 more real external users hitting the same header bug
+  before the fix landed. **ERP-086** — the friendly-error-message half is done
+  (`app/ingestion/cloud_run_client.py` now raises a user-safe message instead of the raw httpx
+  503 text on an `HTTPStatusError`); the `--memory 8Gi` Cloud Run redeploy half is documented
+  (`deploy/cloud_run_docling/README.md`) but not yet run — it's a live/billable GCP change
+  pending explicit user confirmation. Both tickets built as one plan (4 tasks, each
+  independently reviewed and Approved), full backend suite (529 passed) and frontend suite (both
+  new tests + `tsc`/oxlint/vite build) clean.
+- **Four new planning tickets from live feedback + observability/evaluation gaps, not yet
+  started (2026-09-23)**: **ERP-087** — dashboard for the existing golden-dataset evaluation run
+  history (`evaluation_runs`/`generation_evaluation_runs`); confirmed via live web search that
+  Grafana Cloud's free tier supports a Postgres data source natively. **ERP-088** — design-only
+  ticket for evaluating live production traffic instead of just the fixed 4-query golden dataset
+  (inline judging vs. async sampling vs. existing thumbs up/down feedback), decision deferred.
+  **ERP-089** — latency-breakdown dashboard panel using telemetry ERP-028/042 already collect
+  but never surfaced. **ERP-090** — all-services up/down dashboard; Cloud Run docling and Modal
+  Ollama currently emit no telemetry to Grafana Cloud at all (that gap is why ERP-086 needed
+  direct `gcloud` access instead of Grafana). Researched live: Grafana Cloud Synthetic
+  Monitoring (100k free API-test executions/month, same platform) recommended over UptimeRobot
+  (separate tool). Session log:
+  `.ai/sessions/2026-09-23-observability-and-evaluation-planning.md`.
 - **A second follow-up batch (ERP-075 through ERP-081, ERP-083) plus two live-verification bug
   fixes (ERP-076 redeploy gap, new ERP-084) are all deployed and live-verified (2026-09-19 —
   2026-09-20)**: closes out the remaining items from the punch list assembled after
@@ -105,7 +132,8 @@ Living summary of what exists in this repository right now. Update in place as s
   is a real dialog now (`role="dialog"`, focus trap, Escape-to-close, focus returns to the
   triggering citation on close) — not yet manually browser-verified, deprioritized by the user.
   **ERP-078** — sidebar and source panel both become overlays below the `md` breakpoint instead
-  of a fixed three-column layout — same deprioritized-verification status as ERP-079. **ERP-080**
+  of a fixed three-column layout — same deprioritized-verification status as ERP-079 (now
+  actually browser-verified for real, via ERP-085 above). **ERP-080**
   — `conversation_messages` gained a nullable `citations` JSONB column (migration
   `0e0c25ec1392`); reloaded conversation history keeps working, clickable citation markers —
   **live-verified twice** (a scripted API round-trip test, and the user reloading a real
