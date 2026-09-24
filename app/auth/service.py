@@ -265,6 +265,20 @@ def _delete_owner_faiss_index(owner_id: uuid.UUID) -> None:
         logger.exception("Failed to delete FAISS index file for owner %s", owner_id)
 
 
+def delete_own_account(user_id: uuid.UUID) -> None:
+    """Permanently delete the caller's own account and every row they own. Irreversible -- no undo.
+
+    Unlike `delete_user`, this never raises `CannotDeleteSelfError` -- deleting your own account
+    is exactly the intended action here, not a footgun to block.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        delete_user_and_owned_data(session, user_id)
+        session.commit()
+
+    _delete_owner_faiss_index(user_id)
+
+
 def delete_user(user_id: uuid.UUID, acting_admin_id: uuid.UUID) -> None:
     """Permanently delete `user_id` and every row they own. Irreversible -- no undo.
 

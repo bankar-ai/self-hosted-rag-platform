@@ -121,9 +121,9 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       aria-label={`Source: ${citation.source_filename}`}
       tabIndex={-1}
       onKeyDown={handleKeyDown}
-      className="fixed inset-0 z-40 flex w-full flex-col overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 focus:outline-none md:static md:inset-auto md:z-auto md:w-80 md:shrink-0"
+      className="fixed inset-0 z-40 flex w-full flex-col overflow-x-hidden overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 focus:outline-none md:static md:inset-auto md:z-auto md:w-80 md:shrink-0"
     >
-      <div className="mb-3 flex items-center justify-between">
+      <div className="sticky top-0 z-10 pb-3 flex items-center justify-between bg-slate-50">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Source</p>
         <div className="flex items-center gap-1">
           {state.status === "loaded" && (
@@ -144,7 +144,7 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       </div>
 
       <p className="text-sm font-medium text-slate-900">{citation.source_filename}</p>
-      <p className="mb-3 text-xs text-slate-400">
+      <p className="mb-3 break-words text-xs text-slate-400">
         {pages}
         {citation.section_path.length > 0
           ? ` — ${citation.section_path.map(stripMarkdownDecoration).join(" / ")}`
@@ -173,7 +173,7 @@ export default function SourcePanel({ citation, onClose }: SourcePanelProps) {
       )}
 
       {state.status === "loaded" && (
-        <div className="text-sm text-slate-700 [&_h1]:mb-1 [&_h1]:mt-3 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_h4]:mb-1 [&_h4]:mt-2 [&_h4]:text-sm [&_h4]:font-semibold [&_h5]:mb-1 [&_h5]:mt-2 [&_h5]:text-sm [&_h5]:font-semibold [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_mark]:bg-yellow-200 [&_mark]:px-0.5 [&_u]:underline">
+        <div className="break-words text-sm text-slate-700 [&_h1]:mb-1 [&_h1]:mt-3 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mb-1 [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_h4]:mb-1 [&_h4]:mt-2 [&_h4]:text-sm [&_h4]:font-semibold [&_h5]:mb-1 [&_h5]:mt-2 [&_h5]:text-sm [&_h5]:font-semibold [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_mark]:bg-yellow-200 [&_mark]:px-0.5 [&_u]:underline">
           <ReactMarkdown rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}>
             {state.text}
           </ReactMarkdown>

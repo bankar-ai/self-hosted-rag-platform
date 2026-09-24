@@ -64,6 +64,30 @@ describe("SourcePanel", () => {
     expect(screen.getByText(/relevance score: 0\.870/i)).toBeInTheDocument();
   });
 
+  it("contains horizontal overflow instead of letting the whole panel scroll sideways", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    const { container } = render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    const panel = container.querySelector('[role="dialog"]');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("overflow-x-hidden");
+  });
+
+  it("uses padding, not margin, for the sticky header's bottom spacing", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+
+    const { container } = render(<SourcePanel citation={citation} onClose={() => {}} />);
+
+    const header = container.querySelector(".sticky");
+    expect(header).not.toBeNull();
+    // Margin is transparent, so as content scrolls under the sticky header it would show
+    // through the gap directly beneath it -- padding keeps the header's background covering
+    // that space instead.
+    expect(header?.className).toContain("pb-3");
+    expect(header?.className).not.toContain("mb-3");
+  });
+
   it("shows a retryable error on a network failure, and retries on click", async () => {
     const fetchMock = vi
       .fn()

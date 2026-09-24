@@ -5,7 +5,14 @@ import uuid
 from app.core.db import get_session_factory
 from app.embedding.index import OwnerFaissIndexStore
 from app.ingestion.config import IngestionSettings
-from app.ingestion.jobs import create_job, delete_job, get_job, retry_job, run_ingestion_job
+from app.ingestion.jobs import (
+    create_job,
+    delete_job,
+    get_job,
+    retry_job,
+    run_ingestion_job,
+    try_create_job,
+)
 from app.ingestion.models import ChunkRecord
 from app.ingestion.schemas import JobStatus
 
@@ -228,6 +235,36 @@ def test_delete_job_returns_false_for_unknown_job():
 def test_delete_job_returns_false_for_a_job_that_is_not_failed():
     job_id = create_job(_TEST_OWNER_ID, "/tmp/unused.pdf", "unused.pdf")
     assert delete_job(job_id, _TEST_OWNER_ID) is False
+
+
+def test_try_create_job_returns_none_when_owner_at_cap():
+    owner_id = uuid.uuid4()
+    job_ids = [
+        try_create_job(owner_id, f"/tmp/{i}.pdf", f"{i}.pdf", max_active=3) for i in range(3)
+    ]
+    assert all(job_id is not None for job_id in job_ids)
+
+    rejected = try_create_job(owner_id, "/tmp/4.pdf", "4.pdf", max_active=3)
+    assert rejected is None
+
+
+def test_try_create_job_counts_only_pending_and_processing_for_that_owner():
+    import app.ingestion.jobs as jobs_module
+
+    owner_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    job_id = try_create_job(owner_id, "/tmp/1.pdf", "1.pdf", max_active=1)
+    assert job_id is not None
+
+    # A different owner's job doesn't count against this owner's cap.
+    other_job_id = try_create_job(other_owner_id, "/tmp/2.pdf", "2.pdf", max_active=1)
+    assert other_job_id is not None
+
+    # A DONE job for the same owner frees up capacity.
+    with jobs_module._lock:
+        jobs_module._jobs[job_id].status = JobStatus.DONE
+    freed = try_create_job(owner_id, "/tmp/3.pdf", "3.pdf", max_active=1)
+    assert freed is not None
 
 
 def test_delete_job_returns_false_for_wrong_owner(tmp_path, monkeypatch):

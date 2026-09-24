@@ -94,6 +94,68 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **Two more bugs logged from live post-deploy feedback, not yet started (2026-09-24)**:
+  **ERP-095** — upload/document status not synced across devices for the same account; root
+  cause found via code investigation (`documentsStore.ts` tracks in-progress status in
+  per-browser `localStorage`, only the finished document list is server-synced), not yet
+  live-verified. **ERP-096** — a Q&A pair visually disappears when switching browser tabs
+  mid-stream, reappearing once the answer finishes; two candidate explanations (browser
+  background-tab throttling vs. an unstable `key={index}` in the message list) neither
+  confirmed — needs live reproduction with devtools before any fix. **ERP-091** also extended
+  with a third latency surface: login taking 3-5+ seconds, hypothesized as Neon's own
+  serverless-Postgres cold start (a third independent cold-start surface alongside Modal and
+  Cloud Run).
+- **ERP-092, ERP-093, ERP-094 all Done, built via `superpowers:subagent-driven-development`
+  (2026-09-24)**: **ERP-092** — an intro/onboarding surface, both a one-time first-login modal
+  (`IntroModal.tsx`, gated on `localStorage` + authenticated state) and a permanent `/about`
+  page, sharing content (`introContent.tsx`'s `CAN_DO`/`CANNOT_DO` bullet lists) — a pre-review
+  bug (modal mounting on `/login` before auth) was caught and fixed before merge. **ERP-093** —
+  self-service account deletion: `DELETE /auth/me` (backend, reuses ERP-040's
+  `delete_user_and_owned_data`, structurally self-only — no `user_id` param) plus a
+  "Delete account" button gated behind a `window.confirm` warning (a review finding — logging
+  out unconditionally even on a failed delete — was fixed before merge). **ERP-094** — capped
+  concurrent active ingestion jobs per user at 5 (backend: atomic check-and-create in
+  `jobs.py`'s `try_create_job`, `429` on the endpoint; frontend: matching client-side cap in
+  `DocumentsPage.tsx`'s `stageFiles`), chosen via infra analysis (Cloud Run's `max-instances=3`,
+  the VM's thin memory headroom) rather than a live load test. 6 implementation tasks total,
+  each task-reviewed and Approved (2 fix rounds for real findings caught in review). Full
+  backend suite (537 passed) and frontend suite (74 passed) clean at completion.
+- **ERP-091 logged, not yet started (2026-09-24)**: reduce perceived/actual latency for chat
+  answers and document uploads; likely dominated by Modal/Cloud Run scale-to-zero cold starts
+  (ERP-037/ERP-086 evidence), needs ERP-089's latency panel first to confirm before choosing
+  UX-mitigation vs. paid-tradeoff (`min_containers=1`).
+- **ERP-085 and ERP-086 both Done, built via `superpowers:subagent-driven-development` and
+  merged to `develop` via PR #58 (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed
+  mobile bugs fixed: `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav
+  collision and page-level horizontal scroll), and `SourcePanel.tsx`'s `<aside>` gained
+  `overflow-x-hidden` (the CSS spec's "one non-visible axis forces the other to `auto`" rule was
+  silently making the whole panel horizontally scrollable) plus `break-words` and a `sticky
+  top-0`/`pb-3` header row so Copy/Close stay reachable. Corroborated by 2 more real external
+  users hitting the same header bug before the fix landed; the ticket honestly notes the fix
+  itself was only verified via `vitest`/jsdom, not yet real-device-reconfirmed. **ERP-086** —
+  `app/ingestion/cloud_run_client.py` now raises a friendly message only for `HTTPStatusError`s
+  with `status_code >= 500` (a final-review finding caught the first version over-applying "too
+  large or complex" wording to 4xx config/auth errors too; 4xx now gets a neutral message
+  instead), and the Cloud Run docling service was redeployed with `--memory 8Gi` (was 4Gi) —
+  confirmed live via `gcloud run services describe` (new revision `-00004-68w`, serving 100% of
+  traffic). Both tickets built as one plan (4 implementation tasks + doc closeout, each
+  independently reviewed and Approved, plus a final whole-branch review that caught and fixed 2
+  Important findings), full backend suite (530 passed) and frontend suite (65 passed, `tsc`/
+  oxlint/vite build clean). Session log:
+  `.ai/sessions/2026-09-23-erp085-086-live-bugfixes.md`.
+- **Four new planning tickets from live feedback + observability/evaluation gaps, not yet
+  started (2026-09-23)**: **ERP-087** — dashboard for the existing golden-dataset evaluation run
+  history (`evaluation_runs`/`generation_evaluation_runs`); confirmed via live web search that
+  Grafana Cloud's free tier supports a Postgres data source natively. **ERP-088** — design-only
+  ticket for evaluating live production traffic instead of just the fixed 4-query golden dataset
+  (inline judging vs. async sampling vs. existing thumbs up/down feedback), decision deferred.
+  **ERP-089** — latency-breakdown dashboard panel using telemetry ERP-028/042 already collect
+  but never surfaced. **ERP-090** — all-services up/down dashboard; Cloud Run docling and Modal
+  Ollama currently emit no telemetry to Grafana Cloud at all (that gap is why ERP-086 needed
+  direct `gcloud` access instead of Grafana). Researched live: Grafana Cloud Synthetic
+  Monitoring (100k free API-test executions/month, same platform) recommended over UptimeRobot
+  (separate tool). Session log:
+  `.ai/sessions/2026-09-23-observability-and-evaluation-planning.md`.
 - **A second follow-up batch (ERP-075 through ERP-081, ERP-083) plus two live-verification bug
   fixes (ERP-076 redeploy gap, new ERP-084) are all deployed and live-verified (2026-09-19 —
   2026-09-20)**: closes out the remaining items from the punch list assembled after
@@ -105,7 +167,8 @@ Living summary of what exists in this repository right now. Update in place as s
   is a real dialog now (`role="dialog"`, focus trap, Escape-to-close, focus returns to the
   triggering citation on close) — not yet manually browser-verified, deprioritized by the user.
   **ERP-078** — sidebar and source panel both become overlays below the `md` breakpoint instead
-  of a fixed three-column layout — same deprioritized-verification status as ERP-079. **ERP-080**
+  of a fixed three-column layout — same deprioritized-verification status as ERP-079 (now
+  actually browser-verified for real, via ERP-085 above). **ERP-080**
   — `conversation_messages` gained a nullable `citations` JSONB column (migration
   `0e0c25ec1392`); reloaded conversation history keeps working, clickable citation markers —
   **live-verified twice** (a scripted API round-trip test, and the user reloading a real
