@@ -94,6 +94,17 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **`develop` promoted to `main` and fully deployed live (2026-09-24, PR #60, merge commit
+  `c7bce9e`)**: brings ERP-085, ERP-086, ERP-092, ERP-093, ERP-094 (and all doc-only ticket
+  logging since the last promotion, PR #53) to production. No new DB migrations in this range.
+  **Operational discovery made during this deploy**: the VM's `~/app` checkout actually tracks
+  the `develop` branch, not `main` — a `main` promotion PR alone does not reach production; the
+  VM needs its own `git pull` + `uv sync` + `systemctl restart rag-platform` too (now documented
+  in `gcp-deployment-tracker.md`). Backend redeployed and smoke-checked (`200` on `/docs`,
+  service active); Vercel frontend deployment confirmed `success` for the `main` tip via the
+  GitHub commit-status API. This is why ERP-085's mobile fixes (merged to `develop` 2026-09-23)
+  were still not visible in live feedback gathered later that day — they'd never actually
+  reached either deploy target until now.
 - **Two more bugs logged from live post-deploy feedback, not yet started (2026-09-24)**:
   **ERP-095** — upload/document status not synced across devices for the same account; root
   cause found via code investigation (`documentsStore.ts` tracks in-progress status in
