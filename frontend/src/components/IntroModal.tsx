@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../lib/AuthContext";
 import { CAN_DO, CANNOT_DO } from "../lib/introContent";
 
 const STORAGE_KEY = "introSeen_v1";
 
 export default function IntroModal() {
+  const { isAuthenticated } = useAuth();
   const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) === "true";
@@ -13,7 +15,7 @@ export default function IntroModal() {
     }
   });
 
-  if (dismissed) return null;
+  if (!isAuthenticated || dismissed) return null;
 
   function handleDismiss(): void {
     try {
