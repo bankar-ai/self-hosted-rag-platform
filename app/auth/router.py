@@ -29,6 +29,7 @@ from app.auth.service import (
     OidcNotConfiguredError,
     UserNotFoundError,
     complete_oidc_login,
+    delete_own_account,
     delete_user,
     get_user_profile,
     list_all_users,
@@ -109,6 +110,12 @@ def me(current_user: CurrentUser = Depends(get_current_user)) -> UserResponse:
     except UserNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
     return UserResponse(id=user.id, email=user.email, role=cast(Role, user.role), is_active=user.is_active)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_me(current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Permanently delete the caller's own account and everything they own. Irreversible."""
+    delete_own_account(current_user.id)
 
 
 @oidc_router.get("/{provider}/login")

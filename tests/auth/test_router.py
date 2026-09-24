@@ -1,3 +1,4 @@
+import uuid
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -5,6 +6,10 @@ from fastapi.testclient import TestClient
 
 from app.auth import oidc
 from app.auth.config import get_auth_settings
+from app.core.db import get_session_factory
+from app.generation.repository import append_message, get_or_create_conversation, set_message_feedback
+from app.ingestion.repository import save_document_and_chunks
+from app.ingestion.schemas import Chunk
 from app.main import app
 
 # base_url="https://..." (not the default http://testserver) so the OIDC flow's `Secure` cookie
@@ -125,6 +130,57 @@ def test_me_rejects_missing_token():
     response = client.get("/auth/me")
 
     assert response.status_code == 401
+
+
+def test_delete_me_rejects_missing_token():
+    response = client.delete("/auth/me")
+
+    assert response.status_code == 401
+
+
+def test_delete_me_removes_caller_and_their_owned_data_and_requires_no_user_id_param():
+    email = f"delete-me-router-{uuid.uuid4()}@example.com"
+    password = "a-long-enough-password"
+    client.post("/auth/register", json={"email": email, "password": password})
+    login_response = client.post("/auth/login", json={"email": email, "password": password})
+    tokens = login_response.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    user_id = uuid.UUID(client.get("/auth/me", headers=headers).json()["id"])
+
+    # Give this user owned data across every table `delete_user_and_owned_data` must clean up --
+    # mirrors test_admin.py's test_admin_can_delete_a_user_and_their_owned_data, just deleting via
+    # the self-service endpoint (no user_id in the URL; it always acts on the caller) instead of
+    # the admin one.
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        chunk = Chunk(
+            chunk_id=f"chunk-{uuid.uuid4()}",
+            document_id=f"doc-{uuid.uuid4()}",
+            chunk_index=0,
+            text="some owned content",
+            section_path=["Intro"],
+            page_start=1,
+            page_end=1,
+            char_count=len("some owned content"),
+            parser_used="fast",
+            source_filename="doc.pdf",
+        )
+        save_document_and_chunks(session, chunk.document_id, chunk.source_filename, [chunk], user_id)
+        conversation_id = uuid.uuid4()
+        get_or_create_conversation(session, conversation_id, user_id)
+        append_message(session, conversation_id, "user", "hello")
+        assistant_message = append_message(session, conversation_id, "assistant", "hi there")
+        set_message_feedback(session, assistant_message.id, user_id, "up")
+        session.commit()
+
+    response = client.delete("/auth/me", headers=headers)
+    assert response.status_code == 204
+
+    # Refresh tokens are cascade-deleted with the user, so the old refresh token must now fail --
+    # even though the already-issued access token (stateless, not checked against the DB per
+    # request) would still decode fine within its own unexpired lifetime.
+    refresh_response = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    assert refresh_response.status_code == 401
 
 
 def test_register_rejects_duplicate_email():

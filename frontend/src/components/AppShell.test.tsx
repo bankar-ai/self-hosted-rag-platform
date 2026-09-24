@@ -1,7 +1,10 @@
-import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
+import { setTokens } from "../lib/tokenStorage";
+import AuthGuard from "./AuthGuard";
 import AppShell from "./AppShell";
 
 describe("AppShell", () => {
@@ -12,6 +15,7 @@ describe("AppShell", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("allows the header to wrap instead of forcing horizontal overflow", () => {
@@ -27,5 +31,97 @@ describe("AppShell", () => {
     const header = screen.getByText("Self-Hosted RAG Platform").closest("header");
     expect(header).not.toBeNull();
     expect(header?.className).toContain("flex-wrap");
+  });
+
+  it("deletes the account and logs out when confirmed", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    // isAuthenticated (read by AuthGuard below) is derived from whether tokens are stored --
+    // set some up so the guard renders AppShell rather than immediately redirecting to /login.
+    setTokens({ accessToken: "a", refreshToken: "b" });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<p>Login page</p>} />
+            <Route
+              path="/"
+              element={
+                <AuthGuard>
+                  <AppShell>
+                    <div>content</div>
+                  </AppShell>
+                </AuthGuard>
+              }
+            />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /delete account/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/auth/me"),
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    // "logs out" (per this test's own name) means isAuthenticated flips false -- verified the
+    // same way AuthGuard.test.tsx distinguishes authenticated/unauthenticated rendering: the
+    // guard now redirects to /login instead of showing AppShell's content.
+    await waitFor(() => expect(screen.getByText("Login page")).toBeInTheDocument());
+    expect(screen.queryByText("content")).not.toBeInTheDocument();
+  });
+
+  it("does not delete the account when the confirmation is declined", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <AppShell>
+            <div>content</div>
+          </AppShell>
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /delete account/i }));
+
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/auth/me"),
+      expect.anything()
+    );
+  });
+
+  it("shows an error and does not log out when delete fails", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window, "alert").mockReturnValue(undefined);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <AppShell>
+            <div>content</div>
+          </AppShell>
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /delete account/i }));
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith("Failed to delete account. Please try again.");
+    });
+
+    expect(screen.getByRole("button", { name: /delete account/i })).toBeInTheDocument();
   });
 });

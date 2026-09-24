@@ -94,16 +94,25 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
-- **Four more tickets logged from live feedback, not yet started (2026-09-24)**: **ERP-091** —
-  reduce perceived/actual latency for chat answers and document uploads; likely dominated by
-  Modal/Cloud Run scale-to-zero cold starts (ERP-037/ERP-086 evidence), needs ERP-089's latency
-  panel first to confirm before choosing UX-mitigation vs. paid-tradeoff (`min_containers=1`).
-  **ERP-092** — an intro/onboarding page explaining what the tool does; open questions on
-  modal-vs-route and one-time-vs-reshowable need a decision first. **ERP-093** — self-service
-  "Delete account" button; mostly a thin new endpoint since ERP-040's
-  `delete_user_and_owned_data` already does the hard part, open questions on confirmation flow.
-  **ERP-094** — cap the number of files in one multi-file upload (currently unbounded); needs
-  the cap value decided, otherwise a small, well-scoped ticket.
+- **ERP-092, ERP-093, ERP-094 all Done, built via `superpowers:subagent-driven-development`
+  (2026-09-24)**: **ERP-092** — an intro/onboarding surface, both a one-time first-login modal
+  (`IntroModal.tsx`, gated on `localStorage` + authenticated state) and a permanent `/about`
+  page, sharing content (`introContent.tsx`'s `CAN_DO`/`CANNOT_DO` bullet lists) — a pre-review
+  bug (modal mounting on `/login` before auth) was caught and fixed before merge. **ERP-093** —
+  self-service account deletion: `DELETE /auth/me` (backend, reuses ERP-040's
+  `delete_user_and_owned_data`, structurally self-only — no `user_id` param) plus a
+  "Delete account" button gated behind a `window.confirm` warning (a review finding — logging
+  out unconditionally even on a failed delete — was fixed before merge). **ERP-094** — capped
+  concurrent active ingestion jobs per user at 5 (backend: atomic check-and-create in
+  `jobs.py`'s `try_create_job`, `429` on the endpoint; frontend: matching client-side cap in
+  `DocumentsPage.tsx`'s `stageFiles`), chosen via infra analysis (Cloud Run's `max-instances=3`,
+  the VM's thin memory headroom) rather than a live load test. 6 implementation tasks total,
+  each task-reviewed and Approved (2 fix rounds for real findings caught in review). Full
+  backend suite (537 passed) and frontend suite (74 passed) clean at completion.
+- **ERP-091 logged, not yet started (2026-09-24)**: reduce perceived/actual latency for chat
+  answers and document uploads; likely dominated by Modal/Cloud Run scale-to-zero cold starts
+  (ERP-037/ERP-086 evidence), needs ERP-089's latency panel first to confirm before choosing
+  UX-mitigation vs. paid-tradeoff (`min_containers=1`).
 - **ERP-085 and ERP-086 both Done, built via `superpowers:subagent-driven-development` and
   merged to `develop` via PR #58 (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed
   mobile bugs fixed: `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav

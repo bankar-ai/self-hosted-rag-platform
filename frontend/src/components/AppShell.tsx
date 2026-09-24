@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
+import { apiFetch } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
@@ -10,6 +11,20 @@ function navLinkClass({ isActive }: { isActive: boolean }): string {
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+
+  async function handleDeleteAccount(): Promise<void> {
+    const confirmed = window.confirm(
+      "Deleting your account permanently removes your account and all your data " +
+        "(documents, conversations, everything) with no way to undo it. Continue?"
+    );
+    if (!confirmed) return;
+    const response = await apiFetch("/auth/me", { method: "DELETE" });
+    if (!response.ok) {
+      window.alert("Failed to delete account. Please try again.");
+      return;
+    }
+    logout();
+  }
 
   return (
     <div className="flex h-screen flex-col">
@@ -24,6 +39,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <NavLink to="/documents" className={navLinkClass}>
             Documents
           </NavLink>
+          <NavLink to="/about" className={navLinkClass}>
+            How it works
+          </NavLink>
           {user && (
             <span className="ml-2 truncate text-sm text-slate-500" title={user.email}>
               {user.email}
@@ -35,6 +53,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
             className="rounded-md px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
           >
             Log out
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDeleteAccount()}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+          >
+            Delete account
           </button>
         </nav>
       </header>

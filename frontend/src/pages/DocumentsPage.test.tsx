@@ -405,4 +405,56 @@ describe("DocumentsPage", () => {
     expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
     expect(screen.queryByText("gone.pdf")).not.toBeInTheDocument();
   });
+
+  it("shows the server's detail message instead of a generic failure when the upload is rejected (e.g. 429)", async () => {
+    stubAuthAndEmptyDocuments();
+    vi.spyOn(apiClient, "uploadWithProgress").mockResolvedValue({
+      ok: false,
+      status: 429,
+      body: { detail: "You already have 5 documents processing. Wait for one to finish before uploading more." },
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText(/no documents uploaded yet/i));
+
+    const file = new File(["%PDF-1.4"], "sixth.pdf", { type: "application/pdf" });
+    const input = screen.getByLabelText(/choose pdf files/i) as HTMLInputElement;
+    await userEvent.upload(input, file);
+    await userEvent.click(screen.getByRole("button", { name: /upload 1 file/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /you already have 5 documents processing\. wait for one to finish before uploading more\./i
+        )
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByText(/^upload failed\.$/i)).not.toBeInTheDocument();
+  });
+
+  it("rejects a selection that would exceed the 5-file upload cap", async () => {
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText(/no documents uploaded yet/i));
+
+    const files = Array.from({ length: 6 }, (_, i) =>
+      new File([new Uint8Array(10)], `doc${i}.pdf`, { type: "application/pdf" })
+    );
+    const input = screen.getByLabelText(/choose pdf files/i);
+    await userEvent.upload(input, files);
+
+    expect(
+      screen.getByText(/only 5 files can be uploaded at a time/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/ready to upload/i)).not.toBeInTheDocument();
+  });
 });
