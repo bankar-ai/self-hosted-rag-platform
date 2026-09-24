@@ -13,6 +13,7 @@ from app.auth.service import (
     OidcNotConfiguredError,
     UserNotFoundError,
     complete_oidc_login,
+    delete_own_account,
     delete_user,
     list_all_users,
     login,
@@ -200,6 +201,26 @@ def test_delete_user_swallows_faiss_index_deletion_failure(monkeypatch):
     monkeypatch.setattr("pathlib.Path.unlink", _raise_os_error)
 
     delete_user(user.id, acting_admin_id=uuid.uuid4())  # must not raise
+
+
+def test_delete_own_account_removes_the_user(auth_settings):
+    user = register_user("delete-own-account@example.com", "a-long-enough-password")
+
+    delete_own_account(user.id)
+
+    with pytest.raises(InvalidCredentialsError):
+        login("delete-own-account@example.com", "a-long-enough-password", settings=auth_settings)
+
+
+def test_delete_own_account_swallows_faiss_index_deletion_failure(monkeypatch):
+    user = register_user("delete-own-account-faiss-failure@example.com", "a-long-enough-password")
+
+    def _raise_os_error(self, missing_ok=False):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("pathlib.Path.unlink", _raise_os_error)
+
+    delete_own_account(user.id)  # must not raise
 
 
 def _canned_claims(**overrides) -> dict:
