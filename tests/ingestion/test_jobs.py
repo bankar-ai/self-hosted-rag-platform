@@ -9,6 +9,7 @@ from app.ingestion.jobs import (
     create_job,
     delete_job,
     get_job,
+    list_active_jobs,
     retry_job,
     run_ingestion_job,
     try_create_job,
@@ -265,6 +266,36 @@ def test_try_create_job_counts_only_pending_and_processing_for_that_owner():
         jobs_module._jobs[job_id].status = JobStatus.DONE
     freed = try_create_job(owner_id, "/tmp/3.pdf", "3.pdf", max_active=1)
     assert freed is not None
+
+
+def test_list_active_jobs_excludes_done_but_includes_pending_processing_failed():
+    owner_id = uuid.uuid4()
+    pending_id = create_job(owner_id, "/tmp/pending.pdf", "pending.pdf")
+    failed_id = create_job(owner_id, "/no/such/file.pdf", "failed.pdf")
+    run_ingestion_job(failed_id, "/no/such/file.pdf", "failed.pdf", _settings(), owner_id)
+    done_id = create_job(owner_id, "/tmp/done.pdf", "done.pdf")
+    import app.ingestion.jobs as jobs_module
+
+    with jobs_module._lock:
+        jobs_module._jobs[done_id].status = JobStatus.DONE
+
+    active = dict(list_active_jobs(owner_id))
+
+    assert set(active) == {pending_id, failed_id}
+    assert active[pending_id].status == JobStatus.PENDING
+    assert active[failed_id].status == JobStatus.FAILED
+
+
+def test_list_active_jobs_scoped_to_owner():
+    owner_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    create_job(owner_id, "/tmp/mine.pdf", "mine.pdf")
+    create_job(other_owner_id, "/tmp/theirs.pdf", "theirs.pdf")
+
+    active = list_active_jobs(owner_id)
+
+    assert len(active) == 1
+    assert active[0][1].filename == "mine.pdf"
 
 
 def test_delete_job_returns_false_for_wrong_owner(tmp_path, monkeypatch):

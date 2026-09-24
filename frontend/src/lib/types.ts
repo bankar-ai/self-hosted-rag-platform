@@ -57,6 +57,17 @@ export interface JobStatusResponse {
   error: string | null;
 }
 
+export interface JobSummary {
+  job_id: string;
+  filename: string;
+  status: JobStatus;
+  error: string | null;
+}
+
+export interface JobListResponse {
+  jobs: JobSummary[];
+}
+
 export interface DocumentSummary {
   document_id: string;
   filename: string;
