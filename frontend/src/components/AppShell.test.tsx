@@ -77,4 +77,29 @@ describe("AppShell", () => {
       expect.anything()
     );
   });
+
+  it("shows an error and does not log out when delete fails", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window, "alert").mockReturnValue(undefined);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <AppShell>
+            <div>content</div>
+          </AppShell>
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /delete account/i }));
+
+    await waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith("Failed to delete account. Please try again.");
+    });
+
+    expect(screen.getByRole("button", { name: /delete account/i })).toBeInTheDocument();
+  });
 });

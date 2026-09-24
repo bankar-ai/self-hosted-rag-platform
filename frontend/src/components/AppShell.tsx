@@ -18,7 +18,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
         "(documents, conversations, everything) with no way to undo it. Continue?"
     );
     if (!confirmed) return;
-    await apiFetch("/auth/me", { method: "DELETE" });
+    const response = await apiFetch("/auth/me", { method: "DELETE" });
+    if (!response.ok) {
+      window.alert("Failed to delete account. Please try again.");
+      return;
+    }
     logout();
   }
 
