@@ -27,6 +27,7 @@ interface UploadInFlight {
   file: File;
   progress: number;
   status: "uploading" | "failed";
+  errorMessage?: string;
 }
 
 export default function DocumentsPage() {
@@ -137,8 +138,16 @@ export default function DocumentsPage() {
     }).catch(() => null);
 
     if (!result || !result.ok) {
+      // Prefer the backend's own explanation (e.g. the 429 "too many active jobs" message from
+      // ERP-094) over a generic "Upload failed." -- a network-level failure (`result` is null)
+      // or a response with no parseable `detail` still falls back to the generic text.
+      const detail =
+        result && typeof result.body === "object" && result.body !== null && "detail" in result.body
+          ? (result.body as { detail?: unknown }).detail
+          : undefined;
+      const errorMessage = typeof detail === "string" ? detail : undefined;
       setUploadsInFlight((prev) =>
-        prev.map((u) => (u.id === uploadId ? { ...u, status: "failed" } : u))
+        prev.map((u) => (u.id === uploadId ? { ...u, status: "failed", errorMessage } : u))
       );
       return;
     }
@@ -361,7 +370,7 @@ export default function DocumentsPage() {
               <p className="mb-2 truncate text-sm font-medium text-slate-900">{upload.file.name}</p>
               {upload.status === "failed" ? (
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-red-600">Upload failed.</p>
+                  <p className="text-sm text-red-600">{upload.errorMessage ?? "Upload failed."}</p>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" onClick={() => retryUpload(upload.id)}>
                       Try again
