@@ -405,4 +405,26 @@ describe("DocumentsPage", () => {
     expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
     expect(screen.queryByText("gone.pdf")).not.toBeInTheDocument();
   });
+
+  it("rejects a selection that would exceed the 5-file upload cap", async () => {
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+    await waitFor(() => screen.getByText(/no documents uploaded yet/i));
+
+    const files = Array.from({ length: 6 }, (_, i) =>
+      new File([new Uint8Array(10)], `doc${i}.pdf`, { type: "application/pdf" })
+    );
+    const input = screen.getByLabelText(/choose pdf files/i);
+    await userEvent.upload(input, files);
+
+    expect(
+      screen.getByText(/only 5 files can be uploaded at a time/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/ready to upload/i)).not.toBeInTheDocument();
+  });
 });

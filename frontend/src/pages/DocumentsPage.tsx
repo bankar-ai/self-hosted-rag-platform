@@ -13,6 +13,9 @@ const POLL_INTERVAL_MS = 2000;
 const MAX_UPLOAD_SIZE_BYTES = 20_000_000;
 const MAX_UPLOAD_SIZE_LABEL = "20 MB";
 
+// Must match the live `INGESTION_MAX_ACTIVE_JOBS_PER_USER` backend setting (ERP-094).
+const MAX_FILES_PER_UPLOAD = 5;
+
 const IN_PROGRESS_STATUS_STYLES: Record<"pending" | "processing" | "failed", string> = {
   pending: "bg-amber-100 text-amber-700",
   processing: "bg-amber-100 text-amber-700",
@@ -42,6 +45,7 @@ export default function DocumentsPage() {
   // `inProgress`, which starts only once the backend has accepted the file and created a job.
   const [uploadsInFlight, setUploadsInFlight] = useState<UploadInFlight[]>([]);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
+  const [tooManyFilesMessage, setTooManyFilesMessage] = useState<string | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<Set<string>>(new Set());
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -162,6 +166,13 @@ export default function DocumentsPage() {
   }
 
   function stageFiles(files: File[]): void {
+    if (stagedFiles.length + files.length > MAX_FILES_PER_UPLOAD) {
+      setTooManyFilesMessage(
+        `Only ${MAX_FILES_PER_UPLOAD} files can be uploaded at a time. Remove some and try again.`
+      );
+      return;
+    }
+    setTooManyFilesMessage(null);
     const accepted: File[] = [];
     const rejected: string[] = [];
     for (const file of files) {
@@ -308,6 +319,10 @@ export default function DocumentsPage() {
         <p className="mb-6 text-sm text-red-600">
           Too large (max {MAX_UPLOAD_SIZE_LABEL}), not uploaded: {rejectedFiles.join(", ")}
         </p>
+      )}
+
+      {tooManyFilesMessage && (
+        <p className="mb-6 text-sm text-red-600">{tooManyFilesMessage}</p>
       )}
 
       {stagedFiles.length > 0 && (
