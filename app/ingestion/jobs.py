@@ -49,15 +49,20 @@ def create_job(owner_id: uuid.UUID, pdf_path: str, filename: str) -> str:
     return job_id
 
 
+def _count_active_locked(owner_id: uuid.UUID) -> int:
+    """Count `owner_id`'s currently PENDING or PROCESSING jobs. Caller must hold `_lock`."""
+    return sum(
+        1
+        for record in _jobs.values()
+        if record.owner_id == owner_id
+        and record.status in (JobStatus.PENDING, JobStatus.PROCESSING)
+    )
+
+
 def count_active_jobs(owner_id: uuid.UUID) -> int:
     """Count `owner_id`'s currently PENDING or PROCESSING jobs."""
     with _lock:
-        return sum(
-            1
-            for record in _jobs.values()
-            if record.owner_id == owner_id
-            and record.status in (JobStatus.PENDING, JobStatus.PROCESSING)
-        )
+        return _count_active_locked(owner_id)
 
 
 def try_create_job(
@@ -72,13 +77,7 @@ def try_create_job(
     """
     job_id = str(uuid.uuid4())
     with _lock:
-        active = sum(
-            1
-            for record in _jobs.values()
-            if record.owner_id == owner_id
-            and record.status in (JobStatus.PENDING, JobStatus.PROCESSING)
-        )
-        if active >= max_active:
+        if _count_active_locked(owner_id) >= max_active:
             return None
         _jobs[job_id] = JobRecord(owner_id, pdf_path, filename)
     return job_id
