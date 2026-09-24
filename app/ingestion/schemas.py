@@ -78,3 +78,23 @@ class JobStatusResponse(BaseModel):
     status: JobStatus
     result: IngestResponse | None = None
     error: str | None = None
+
+
+class JobSummary(BaseModel):
+    """One of the caller's tracked ingestion jobs, for the account-wide active-jobs list."""
+
+    job_id: str
+    filename: str
+    status: JobStatus
+    error: str | None = None
+
+
+class JobListResponse(BaseModel):
+    """The caller's PENDING/PROCESSING/FAILED jobs (ERP-095).
+
+    Lets any device the caller is logged into see in-progress/failed uploads it didn't itself
+    start, instead of relying on the browser-local `localStorage` record of jobs kicked off
+    from that specific browser.
+    """
+
+    jobs: list[JobSummary]

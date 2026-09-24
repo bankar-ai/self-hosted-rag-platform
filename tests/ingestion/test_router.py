@@ -477,6 +477,95 @@ def test_delete_job_404_for_a_job_that_is_not_failed(simple_text_pdf, auth_heade
     assert response.status_code == 404
 
 
+def test_list_jobs_empty_for_new_user(auth_headers):
+    response = client.get("/ingestion/jobs", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"jobs": []}
+
+
+def test_list_jobs_shows_pending_job_started_from_another_session(monkeypatch, simple_text_pdf):
+    # ERP-095: the whole point of this endpoint is that a device which never called
+    # `POST /ingestion/pdf` itself can still see the job -- simulated here by never touching
+    # the returned `job_id` before listing, just authenticating as the same user.
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(jobs_module, "run_ingestion_job", lambda *a, **k: None)
+    auth_headers = register_and_login(client, "ingestion-list-jobs-pending")
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+
+    response = client.get("/ingestion/jobs", headers=auth_headers)
+
+    assert response.status_code == 200
+    jobs = response.json()["jobs"]
+    assert jobs == [{"job_id": job_id, "filename": "simple.pdf", "status": "pending", "error": None}]
+
+
+def test_list_jobs_excludes_done_jobs(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    _poll_until_done(upload.json()["job_id"], auth_headers)
+
+    response = client.get("/ingestion/jobs", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"jobs": []}
+
+
+def test_list_jobs_includes_failed_jobs_with_error(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "ingest_pdf", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    upload = client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    job_id = upload.json()["job_id"]
+    _poll_until_done(job_id, auth_headers)
+
+    response = client.get("/ingestion/jobs", headers=auth_headers)
+
+    assert response.status_code == 200
+    jobs = response.json()["jobs"]
+    assert len(jobs) == 1
+    assert jobs[0]["job_id"] == job_id
+    assert jobs[0]["status"] == "failed"
+    assert "boom" in jobs[0]["error"]
+
+
+def test_list_jobs_does_not_include_another_users_jobs(monkeypatch, simple_text_pdf, auth_headers):
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(jobs_module, "run_ingestion_job", lambda *a, **k: None)
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    client.post(
+        "/ingestion/pdf",
+        files={"file": ("simple.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+
+    other_user_headers = register_and_login(client, "ingestion-list-jobs-other-owner")
+    response = client.get("/ingestion/jobs", headers=other_user_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"jobs": []}
+
+
 def test_delete_job_404_for_job_belonging_to_another_user(monkeypatch, simple_text_pdf, auth_headers):
     import app.ingestion.jobs as jobs_module
 

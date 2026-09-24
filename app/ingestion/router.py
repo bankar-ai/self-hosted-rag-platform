@@ -11,7 +11,13 @@ from app.auth.schemas import CurrentUser
 from app.embedding.service import delete_document_and_vectors
 from app.ingestion import jobs
 from app.ingestion.config import get_settings
-from app.ingestion.schemas import ChunkDetailResponse, DocumentListResponse, JobStatusResponse
+from app.ingestion.schemas import (
+    ChunkDetailResponse,
+    DocumentListResponse,
+    JobListResponse,
+    JobStatusResponse,
+    JobSummary,
+)
 from app.ingestion.service import get_chunk_detail, list_documents
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
@@ -75,6 +81,24 @@ async def upload_pdf(
     )
 
     return {"job_id": job_id}
+
+
+@router.get("/jobs")
+def list_active_jobs(current_user: CurrentUser = Depends(get_current_user)) -> JobListResponse:
+    """Return the caller's PENDING/PROCESSING/FAILED jobs, account-wide (ERP-095).
+
+    Unlike `GET /jobs/{job_id}`, this isn't scoped to a job ID the caller already knows -- it's
+    what lets a second device (or a page reload that lost the local job ID) discover in-progress
+    or failed uploads it didn't itself start.
+    """
+    return JobListResponse(
+        jobs=[
+            JobSummary(
+                job_id=job_id, filename=record.filename, status=record.status, error=record.error
+            )
+            for job_id, record in jobs.list_active_jobs(current_user.id)
+        ]
+    )
 
 
 @router.get("/jobs/{job_id}")
