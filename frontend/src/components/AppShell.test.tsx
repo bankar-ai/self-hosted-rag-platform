@@ -1,8 +1,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
+import { setTokens } from "../lib/tokenStorage";
+import AuthGuard from "./AuthGuard";
 import AppShell from "./AppShell";
 
 describe("AppShell", () => {
@@ -13,6 +15,7 @@ describe("AppShell", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("allows the header to wrap instead of forcing horizontal overflow", () => {
@@ -34,13 +37,26 @@ describe("AppShell", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
+    // isAuthenticated (read by AuthGuard below) is derived from whether tokens are stored --
+    // set some up so the guard renders AppShell rather than immediately redirecting to /login.
+    setTokens({ accessToken: "a", refreshToken: "b" });
 
     render(
       <MemoryRouter>
         <AuthProvider>
-          <AppShell>
-            <div>content</div>
-          </AppShell>
+          <Routes>
+            <Route path="/login" element={<p>Login page</p>} />
+            <Route
+              path="/"
+              element={
+                <AuthGuard>
+                  <AppShell>
+                    <div>content</div>
+                  </AppShell>
+                </AuthGuard>
+              }
+            />
+          </Routes>
         </AuthProvider>
       </MemoryRouter>
     );
@@ -53,6 +69,12 @@ describe("AppShell", () => {
         expect.objectContaining({ method: "DELETE" })
       );
     });
+
+    // "logs out" (per this test's own name) means isAuthenticated flips false -- verified the
+    // same way AuthGuard.test.tsx distinguishes authenticated/unauthenticated rendering: the
+    // guard now redirects to /login instead of showing AppShell's content.
+    await waitFor(() => expect(screen.getByText("Login page")).toBeInTheDocument());
+    expect(screen.queryByText("content")).not.toBeInTheDocument();
   });
 
   it("does not delete the account when the confirmation is declined", async () => {
