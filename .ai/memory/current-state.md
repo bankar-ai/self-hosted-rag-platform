@@ -105,14 +105,42 @@ Living summary of what exists in this repository right now. Update in place as s
   GitHub commit-status API. This is why ERP-085's mobile fixes (merged to `develop` 2026-09-23)
   were still not visible in live feedback gathered later that day — they'd never actually
   reached either deploy target until now.
-- **Two more bugs logged from live post-deploy feedback, not yet started (2026-09-24)**:
-  **ERP-095** — upload/document status not synced across devices for the same account; root
-  cause found via code investigation (`documentsStore.ts` tracks in-progress status in
-  per-browser `localStorage`, only the finished document list is server-synced), not yet
-  live-verified. **ERP-096** — a Q&A pair visually disappears when switching browser tabs
-  mid-stream, reappearing once the answer finishes; two candidate explanations (browser
-  background-tab throttling vs. an unstable `key={index}` in the message list) neither
-  confirmed — needs live reproduction with devtools before any fix. **ERP-091** also extended
+- **ERP-095 Done (2026-09-24)**: added `GET /ingestion/jobs` (caller's PENDING/PROCESSING/FAILED
+  jobs, account-wide — `app/ingestion/jobs.py`'s `list_active_jobs`) so a second device can
+  discover a job it didn't itself start, instead of relying solely on the initiating browser's
+  `localStorage` record. `DocumentsPage.tsx` now hydrates from this endpoint on mount alongside
+  the existing localStorage-seeded state, guarded by a `pollingJobIdsRef` set against
+  double-polling a job this device already started. Verified: backend full suite 544 passed,
+  frontend full suite 76 passed, `tsc -b`/`oxlint` clean. **Not live-verified**: the ticket's own
+  two-device repro step — no second device/browser was available in the session that built this;
+  flagged in the ticket as a recommended follow-up check, not a blocker on the merge. Merged to
+  `develop` via PR #61 (2026-09-24).
+- **ERP-096 still blocked, not started (2026-09-24)**: a Q&A pair visually disappears when
+  switching browser tabs mid-stream, reappearing once the answer finishes; two candidate
+  explanations (browser background-tab throttling vs. an unstable `key={index}` in the message
+  list) neither confirmed. Code investigation (`ChatPage.tsx`, `sseStream.ts`, `AuthContext.tsx`)
+  found no visibility-change-dependent code anywhere in the frontend, so no code-only root cause
+  could be confirmed or ruled out — the ticket explicitly calls for live reproduction with
+  browser devtools open, and no browser-automation tool is available in this environment to do
+  that. Needs the user (or a session with real browser access) to reproduce live before any fix
+  is attempted.
+- **ERP-088 Done, spun off as ERP-097 (2026-09-24)**: decided async sampling of real production
+  `(query, answer, context)` tuples over inline judging (rejected — adds judge-LLM latency to
+  every request, working against ERP-091) or relying on thumbs up/down alone (confirmed already
+  persisted server-side via `MessageFeedbackRecord`/`message_feedback`, ERP-045 — a real but
+  low-response-rate complementary signal, not sufficient alone). Key implementation constraint
+  found: `ConversationMessage.citations` stores citation metadata only, not chunk text — a
+  sampling job must re-resolve `chunk_id` to text at sample time and tolerate a since-deleted
+  chunk/document. **ERP-097** scopes the actual implementation (sample rate, trigger mechanism,
+  storage shape — deliberately left open pending ERP-087's dashboard schema).
+- **ERP-087, ERP-089, ERP-090 (Grafana Cloud dashboard tickets) blocked on credentials, not
+  started (2026-09-24)**: the only Grafana Cloud API token on file
+  (`self-hosted-rag-platform-credentials.md`, scope `set:alloy-data-write`) is write-only for
+  telemetry *ingestion* — it cannot create or edit dashboards via the Grafana HTTP API, and no
+  browser-automation tool is available in this environment to drive the Grafana Cloud UI
+  directly either. These three tickets need either a new API token scoped for dashboard
+  management, or the user to apply dashboard changes manually in the Grafana UI (this session can
+  prepare the exact panel JSON/PromQL/LogQL/SQL to paste in, on request). **ERP-091** also extended
   with a third latency surface: login taking 3-5+ seconds, hypothesized as Neon's own
   serverless-Postgres cold start (a third independent cold-start surface alongside Modal and
   Cloud Run).
