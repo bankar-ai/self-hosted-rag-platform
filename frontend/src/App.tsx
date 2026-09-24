@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import AuthGuard from "./components/AuthGuard";
+import IntroModal from "./components/IntroModal";
 import { AuthProvider } from "./lib/AuthContext";
 import AboutPage from "./pages/AboutPage";
 import ChatPage from "./pages/ChatPage";
@@ -10,6 +11,7 @@ import LoginPage from "./pages/LoginPage";
 function App() {
   return (
     <AuthProvider>
+      <IntroModal />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
