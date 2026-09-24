@@ -94,6 +94,17 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **Two more bugs logged from live post-deploy feedback, not yet started (2026-09-24)**:
+  **ERP-095** — upload/document status not synced across devices for the same account; root
+  cause found via code investigation (`documentsStore.ts` tracks in-progress status in
+  per-browser `localStorage`, only the finished document list is server-synced), not yet
+  live-verified. **ERP-096** — a Q&A pair visually disappears when switching browser tabs
+  mid-stream, reappearing once the answer finishes; two candidate explanations (browser
+  background-tab throttling vs. an unstable `key={index}` in the message list) neither
+  confirmed — needs live reproduction with devtools before any fix. **ERP-091** also extended
+  with a third latency surface: login taking 3-5+ seconds, hypothesized as Neon's own
+  serverless-Postgres cold start (a third independent cold-start surface alongside Modal and
+  Cloud Run).
 - **ERP-092, ERP-093, ERP-094 all Done, built via `superpowers:subagent-driven-development`
   (2026-09-24)**: **ERP-092** — an intro/onboarding surface, both a one-time first-login modal
   (`IntroModal.tsx`, gated on `localStorage` + authenticated state) and a permanent `/about`
