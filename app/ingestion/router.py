@@ -58,7 +58,18 @@ async def upload_pdf(
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
-    job_id = jobs.create_job(current_user.id, str(tmp_path), file.filename)
+    job_id = jobs.try_create_job(
+        current_user.id, str(tmp_path), file.filename, settings.max_active_jobs_per_user
+    )
+    if job_id is None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"You already have {settings.max_active_jobs_per_user} uploads in progress. "
+                "Wait for one to finish before starting another."
+            ),
+        )
     background_tasks.add_task(
         jobs.run_ingestion_job, job_id, str(tmp_path), file.filename, settings, current_user.id
     )

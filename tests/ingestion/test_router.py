@@ -355,6 +355,31 @@ def test_upload_pdf_rejects_oversized_file(monkeypatch, auth_headers):
         get_settings.cache_clear()
 
 
+def test_upload_pdf_rejects_when_owner_at_active_job_cap(monkeypatch, simple_text_pdf, auth_headers):
+    # Stub out the background job runner entirely so each upload's job stays PENDING for the
+    # life of the test -- otherwise TestClient runs the background task to completion within
+    # the same call, freeing capacity before the next upload and the cap would never bite.
+    import app.ingestion.jobs as jobs_module
+
+    monkeypatch.setattr(jobs_module, "run_ingestion_job", lambda *a, **k: None)
+
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    for i in range(5):
+        response = client.post(
+            "/ingestion/pdf",
+            files={"file": (f"cap-{i}.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+            headers=auth_headers,
+        )
+        assert response.status_code == 202
+
+    response = client.post(
+        "/ingestion/pdf",
+        files={"file": ("one-too-many.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+        headers=auth_headers,
+    )
+    assert response.status_code == 429
+
+
 def test_get_chunk_returns_text_and_metadata(simple_text_pdf, auth_headers):
     pdf_bytes = _read_fixture_bytes(simple_text_pdf)
     upload = client.post(

@@ -49,6 +49,41 @@ def create_job(owner_id: uuid.UUID, pdf_path: str, filename: str) -> str:
     return job_id
 
 
+def count_active_jobs(owner_id: uuid.UUID) -> int:
+    """Count `owner_id`'s currently PENDING or PROCESSING jobs."""
+    with _lock:
+        return sum(
+            1
+            for record in _jobs.values()
+            if record.owner_id == owner_id
+            and record.status in (JobStatus.PENDING, JobStatus.PROCESSING)
+        )
+
+
+def try_create_job(
+    owner_id: uuid.UUID, pdf_path: str, filename: str, max_active: int
+) -> str | None:
+    """Atomically check-and-create: register a new PENDING job for `owner_id`, or return None.
+
+    Returns None if `owner_id` already has `max_active` or more PENDING/PROCESSING jobs.
+    The check and the create happen under one lock acquisition (not two separate calls to
+    `count_active_jobs` then `create_job`) so concurrent requests from the same owner can't
+    both pass the check before either creates its job, silently exceeding the cap.
+    """
+    job_id = str(uuid.uuid4())
+    with _lock:
+        active = sum(
+            1
+            for record in _jobs.values()
+            if record.owner_id == owner_id
+            and record.status in (JobStatus.PENDING, JobStatus.PROCESSING)
+        )
+        if active >= max_active:
+            return None
+        _jobs[job_id] = JobRecord(owner_id, pdf_path, filename)
+    return job_id
+
+
 def get_job(job_id: str) -> JobRecord | None:
     """Look up a job by ID, or None if it doesn't exist."""
     with _lock:
