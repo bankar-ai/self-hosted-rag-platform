@@ -94,6 +94,16 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
+- **Four more tickets logged from live feedback, not yet started (2026-09-24)**: **ERP-091** —
+  reduce perceived/actual latency for chat answers and document uploads; likely dominated by
+  Modal/Cloud Run scale-to-zero cold starts (ERP-037/ERP-086 evidence), needs ERP-089's latency
+  panel first to confirm before choosing UX-mitigation vs. paid-tradeoff (`min_containers=1`).
+  **ERP-092** — an intro/onboarding page explaining what the tool does; open questions on
+  modal-vs-route and one-time-vs-reshowable need a decision first. **ERP-093** — self-service
+  "Delete account" button; mostly a thin new endpoint since ERP-040's
+  `delete_user_and_owned_data` already does the hard part, open questions on confirmation flow.
+  **ERP-094** — cap the number of files in one multi-file upload (currently unbounded); needs
+  the cap value decided, otherwise a small, well-scoped ticket.
 - **ERP-085 and ERP-086 both Done, built via `superpowers:subagent-driven-development` and
   merged to `develop` via PR #58 (2026-09-23)**: **ERP-085** — all 4 real-device-confirmed
   mobile bugs fixed: `AppShell.tsx`'s header/nav gained `flex-wrap` (fixes the title/nav
