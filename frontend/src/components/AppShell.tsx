@@ -39,6 +39,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <NavLink to="/documents" className={navLinkClass}>
             Documents
           </NavLink>
+          <NavLink to="/about" className={navLinkClass}>
+            How it works
+          </NavLink>
           {user && (
             <span className="ml-2 truncate text-sm text-slate-500" title={user.email}>
               {user.email}
