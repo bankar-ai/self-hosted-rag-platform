@@ -33,6 +33,24 @@ def test_query_returns_no_context_answer_when_retrieval_empty(auth_headers):
     assert "don't have enough information" in body["answer"]
 
 
+def test_warmup_returns_204_even_when_the_llm_backend_is_unreachable(auth_headers):
+    # No Ollama running in the test environment -- proves the endpoint's resilience contract
+    # (a failed ping is swallowed, never surfaced as an error) against a real failure, not a
+    # mocked one.
+    response = client.post("/generation/warmup", headers=auth_headers)
+    assert response.status_code == 204
+
+
+def test_warmup_delegates_to_warmup_llm(monkeypatch, auth_headers):
+    calls = {"count": 0}
+    monkeypatch.setattr("app.generation.router.warmup_llm", lambda: calls.update(count=calls["count"] + 1))
+
+    response = client.post("/generation/warmup", headers=auth_headers)
+
+    assert response.status_code == 204
+    assert calls["count"] == 1
+
+
 def test_query_rejects_empty_query_string(auth_headers):
     response = client.post("/generation/query", json={"query": ""}, headers=auth_headers)
     assert response.status_code == 422

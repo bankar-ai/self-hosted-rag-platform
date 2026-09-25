@@ -13,6 +13,7 @@ from app.generation.service import (
     generate_stream,
     get_conversation_history,
     list_conversations,
+    warmup_llm,
 )
 from app.retrieval.schemas import RetrievedChunk
 
@@ -69,6 +70,29 @@ class _FakeStreamingLLMClient:
     def generate_stream(self, system_prompt, user_prompt):
         self.stream_calls.append((system_prompt, user_prompt))
         yield from self._chunks
+
+
+def test_warmup_llm_pings_the_given_client():
+    class _FakePingClient:
+        def __init__(self):
+            self.ping_calls = 0
+
+        def ping(self):
+            self.ping_calls += 1
+
+    fake = _FakePingClient()
+    warmup_llm(fake)
+
+    assert fake.ping_calls == 1
+
+
+def test_warmup_llm_swallows_a_failed_ping():
+    class _FailingPingClient:
+        def ping(self):
+            raise RuntimeError("backend unreachable")
+
+    # Must not raise -- a failed warmup is silently absorbed, not surfaced to the caller.
+    warmup_llm(_FailingPingClient())
 
 
 def test_generate_short_circuits_on_empty_retrieval(monkeypatch):

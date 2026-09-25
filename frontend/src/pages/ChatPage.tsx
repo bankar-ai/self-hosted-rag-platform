@@ -83,6 +83,12 @@ function TypingIndicator() {
   );
 }
 
+// ERP-091: how long the assistant's answer can sit at zero tokens before showing a cold-start
+// hint alongside the typing indicator. Set above a normal warm-model first-token latency (well
+// under a second) but well below Modal's observed cold-start range (52-59s under load,
+// ERP-037), so the hint only appears when a cold start is the likely explanation.
+const COLD_START_HINT_DELAY_MS = 5000;
+
 export default function ChatPage() {
   const { userId } = useAuth();
   const [conversationId, setConversationId] = useState<string>(
@@ -91,6 +97,10 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  // ERP-091: true once the current answer has been pending for a while with zero tokens
+  // received yet -- surfaces a cold-start hint alongside the typing indicator instead of
+  // leaving the user staring at a plain animation for up to a minute.
+  const [showColdStartHint, setShowColdStartHint] = useState(false);
   const [recentConversations, setRecentConversations] = useState<SidebarConversation[]>([]);
   const [documents, setDocuments] = useState<SidebarDocument[]>([]);
   // ERP-044: opt-out model -- a document is included in every query's scope unless the user
@@ -178,6 +188,17 @@ export default function ChatPage() {
         }))
       );
     })();
+  }, [userId]);
+
+  // Best-effort ping to wake a scale-to-zero LLM backend (ERP-091) as soon as the chat page
+  // loads, ahead of the user's first message -- overlaps Modal's cold start with the time
+  // spent reading the page/typing a question, instead of it landing entirely on that message.
+  // Ignored entirely if it fails; `sendMessage` pays the cold-start cost itself either way.
+  useEffect(() => {
+    if (!userId) return;
+    void apiFetch("/generation/warmup", { method: "POST" }).catch(() => {
+      // Best-effort only -- see comment above.
+    });
   }, [userId]);
 
   // ERP-064: keep the latest message in view as the conversation grows or streams in.
@@ -274,6 +295,7 @@ export default function ChatPage() {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: query }]);
     setIsStreaming(true);
+    const coldStartTimer = setTimeout(() => setShowColdStartHint(true), COLD_START_HINT_DELAY_MS);
 
     const isFirstMessage = messages.length === 0;
     const documentIds = documents
@@ -307,6 +329,8 @@ export default function ChatPage() {
         if (sseEvent.event === "citations") {
           citations = (sseEvent.data as { citations: Citation[] }).citations;
         } else if (sseEvent.event === "token") {
+          clearTimeout(coldStartTimer);
+          setShowColdStartHint(false);
           assistantText += (sseEvent.data as { text: string }).text;
           setMessages((prev) => [
             ...prev.slice(0, -1),
@@ -342,6 +366,8 @@ export default function ChatPage() {
         { role: "error", content: "Something went wrong while streaming the answer." },
       ]);
     } finally {
+      clearTimeout(coldStartTimer);
+      setShowColdStartHint(false);
       setIsStreaming(false);
     }
   }
@@ -405,7 +431,14 @@ export default function ChatPage() {
                   }
                 >
                   {isPendingAssistant ? (
-                    <TypingIndicator />
+                    <div className="flex flex-col gap-1">
+                      <TypingIndicator />
+                      {showColdStartHint && (
+                        <p className="text-xs text-slate-400">
+                          Waking up the model — this can take up to a minute the first time.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <div className="text-sm">
                       {renderMarkdownLite(message.content, message.citations ?? [], openSourcePanel)}

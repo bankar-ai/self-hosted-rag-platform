@@ -17,19 +17,25 @@ describe("LoginPage", () => {
 
   it("logs in and stores tokens on valid credentials", async () => {
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
-    mockFetch
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ access_token: "a", refresh_token: "b", token_type: "bearer" }),
-          { status: 200 }
-        )
-      )
-      .mockResolvedValueOnce(
+    mockFetch.mockImplementation((url: string) => {
+      if (url.endsWith("/health")) {
+        return Promise.resolve(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+      }
+      if (url.endsWith("/auth/login")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ access_token: "a", refresh_token: "b", token_type: "bearer" }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(
         new Response(
           JSON.stringify({ id: "u1", email: "user@example.com", role: "user", is_active: true }),
           { status: 200 }
         )
       );
+    });
 
     render(
       <MemoryRouter initialEntries={["/login"]}>
@@ -51,7 +57,12 @@ describe("LoginPage", () => {
 
   it("shows an error message on invalid credentials", async () => {
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
-    mockFetch.mockResolvedValueOnce(new Response("{}", { status: 401 }));
+    mockFetch.mockImplementation((url: string) => {
+      if (url.endsWith("/health")) {
+        return Promise.resolve(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+      }
+      return Promise.resolve(new Response("{}", { status: 401 }));
+    });
 
     render(
       <MemoryRouter>
@@ -67,4 +78,81 @@ describe("LoginPage", () => {
 
     expect(await screen.findByText(/invalid email or password/i)).toBeInTheDocument();
   });
+
+  it("fires a health-check ping on mount to pre-warm the database (ERP-091)", async () => {
+    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await vi.waitFor(() =>
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/health"), expect.anything())
+    );
+  });
+
+  it("disables the form and shows a submitting label while logging in", async () => {
+    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    let resolveLogin!: (response: Response) => void;
+    mockFetch.mockImplementation((url: string) => {
+      if (url.endsWith("/health")) {
+        return Promise.resolve(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+      }
+      return new Promise<Response>((resolve) => {
+        resolveLogin = resolve;
+      });
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.type(screen.getByLabelText(/email/i), "user@example.com");
+    await userEvent.type(screen.getByLabelText(/password/i), "hunter2hunter2");
+    await userEvent.click(screen.getByRole("button", { name: /^log in$/i }));
+
+    expect(await screen.findByRole("button", { name: /logging in/i })).toBeDisabled();
+    expect(screen.getByLabelText(/email/i)).toBeDisabled();
+
+    resolveLogin(new Response("{}", { status: 401 }));
+    await screen.findByText(/invalid email or password/i);
+  });
+
+  it("shows a slow-hint message when login takes longer than a couple seconds", async () => {
+    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    mockFetch.mockImplementation((url: string) => {
+      if (url.endsWith("/health")) {
+        return Promise.resolve(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
+      }
+      // Never resolves within this test -- only the slow-hint timer's own effect is asserted.
+      return new Promise<Response>(() => {});
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await userEvent.type(screen.getByLabelText(/email/i), "user@example.com");
+    await userEvent.type(screen.getByLabelText(/password/i), "hunter2hunter2");
+    await userEvent.click(screen.getByRole("button", { name: /^log in$/i }));
+
+    expect(screen.queryByText(/this can take a few seconds/i)).not.toBeInTheDocument();
+
+    expect(
+      await screen.findByText(/this can take a few seconds/i, {}, { timeout: 3000 })
+    ).toBeInTheDocument();
+  }, 10000);
 });

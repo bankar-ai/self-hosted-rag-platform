@@ -106,6 +106,23 @@ def _citations_for(chunks: list[RetrievedChunk], reranked: bool) -> list[Citatio
     ]
 
 
+def warmup_llm(llm_client: OllamaLLMClient | None = None) -> None:
+    """Best-effort ping to wake a scale-to-zero LLM backend before a real request needs it.
+
+    (ERP-091). Never raises -- a failed/slow warmup just means the first real request pays the
+    full cold-start cost, exactly as it would have without this call, so a caller can fire this
+    and ignore the outcome entirely.
+    """
+    llm_client = llm_client or OllamaLLMClient(get_generation_settings())
+    try:
+        llm_client.ping()
+    except Exception:
+        logger.warning(
+            "LLM warmup ping failed -- first real request will pay the full cold-start cost",
+            exc_info=True,
+        )
+
+
 def generate(
     query: str,
     top_k: int,

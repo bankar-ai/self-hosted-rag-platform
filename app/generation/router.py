@@ -29,6 +29,7 @@ from app.generation.service import (
     list_conversations,
     rename_conversation,
     set_feedback,
+    warmup_llm,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,19 @@ def query(
     except Exception as exc:
         logger.exception("Generation query failed")
         raise HTTPException(status_code=503, detail="Generation query failed") from exc
+
+
+@router.post("/warmup", status_code=204)
+def warmup(current_user: CurrentUser = Depends(get_current_user)) -> None:
+    """Ping the LLM backend to trigger a cold start ahead of the user's first message (ERP-091).
+
+    Fired by the frontend as soon as the chat page loads, not on a timer or on every request --
+    the goal is to overlap Modal's cold start (52-59s under load, ERP-037) with the time the
+    user spends reading the page/typing their first question, rather than have it land entirely
+    on that first message. Always returns 204 regardless of whether the ping actually succeeded
+    (see `warmup_llm`'s docstring) -- the frontend fires this and ignores the response.
+    """
+    warmup_llm()
 
 
 def _format_sse(event: str, data: dict[str, Any]) -> str:

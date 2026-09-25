@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as apiClient from "../lib/apiClient";
 import { AuthProvider } from "../lib/AuthContext";
+import { getDocumentsStore } from "../lib/documentsStore";
 import { setTokens } from "../lib/tokenStorage";
 import DocumentsPage from "./DocumentsPage";
 
@@ -413,6 +414,46 @@ describe("DocumentsPage", () => {
 
     await waitFor(() => expect(screen.getByText("from-phone.pdf")).toBeInTheDocument());
     expect(screen.getByText("processing")).toBeInTheDocument();
+  });
+
+  it("shows a cold-start hint for a job stuck processing past the threshold (ERP-091)", async () => {
+    getDocumentsStore("u1").upsert({
+      id: "job-slow",
+      title: "scanned.pdf",
+      status: "processing",
+      lastUpdated: Date.now(),
+      startedAt: Date.now() - 25_000,
+    });
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText("scanned.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/complex documents may need extra processing time/i)).toBeInTheDocument();
+  });
+
+  it("does not show a cold-start hint for a job still within the normal processing window", async () => {
+    getDocumentsStore("u1").upsert({
+      id: "job-fast",
+      title: "quick.pdf",
+      status: "processing",
+      lastUpdated: Date.now(),
+      startedAt: Date.now() - 2_000,
+    });
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText("quick.pdf")).toBeInTheDocument();
+    expect(screen.queryByText(/complex documents may need extra processing time/i)).not.toBeInTheDocument();
   });
 
   it("shows a dismiss button on a failed upload-transfer entry that removes it from the list", async () => {

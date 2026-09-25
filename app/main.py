@@ -8,6 +8,7 @@ from app.auth.router import admin_router, oidc_router
 from app.auth.router import router as auth_router
 from app.core.cors import get_cors_settings
 from app.core.logging_config import configure_logging
+from app.core.router import router as health_router
 from app.core.telemetry import configure_telemetry
 from app.generation.router import conversations_router
 from app.generation.router import router as generation_router
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 configure_telemetry(app)
 app.mount("/metrics", make_asgi_app())
+app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(oidc_router)
 app.include_router(admin_router)
