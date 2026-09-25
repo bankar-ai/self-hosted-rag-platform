@@ -115,15 +115,39 @@ Living summary of what exists in this repository right now. Update in place as s
   two-device repro step — no second device/browser was available in the session that built this;
   flagged in the ticket as a recommended follow-up check, not a blocker on the merge. Merged to
   `develop` via PR #61 (2026-09-24).
-- **ERP-096 still blocked, not started (2026-09-24)**: a Q&A pair visually disappears when
-  switching browser tabs mid-stream, reappearing once the answer finishes; two candidate
-  explanations (browser background-tab throttling vs. an unstable `key={index}` in the message
-  list) neither confirmed. Code investigation (`ChatPage.tsx`, `sseStream.ts`, `AuthContext.tsx`)
-  found no visibility-change-dependent code anywhere in the frontend, so no code-only root cause
-  could be confirmed or ruled out — the ticket explicitly calls for live reproduction with
-  browser devtools open, and no browser-automation tool is available in this environment to do
-  that. Needs the user (or a session with real browser access) to reproduce live before any fix
-  is attempted.
+- **ERP-096 Done (2026-09-25)**: the user supplied a screen recording + 2 HAR captures live-
+  reproducing both scenarios, resolving what code-only investigation on 2026-09-24 couldn't.
+  Turned out to be **two distinct mechanisms**: refresh mid-stream is a real full page
+  navigation (confirmed: a `document`-type request in the HAR, a video frame with the cursor on
+  the reload button) that aborts the connection before persistence — losing the question too,
+  not just the answer; tab-switch is a same-page React remount (proven via `ChatPage`'s three
+  mount-effects firing twice, 31s apart, with zero `document`-type requests — not deferred
+  repaint, not a page reload). The remount's exact trigger was never identified even after
+  grepping the actual deployed, minified production JS bundle for every visibility/lifecycle API
+  (`visibilitychange`/`pageshow`/`freeze`/`resume`/`bfcache` — zero matches anywhere). Rather
+  than keep chasing that, fixed the shared root problem instead: `app/generation/service.py`'s
+  `generate_stream` now persists the user's question immediately (before generation starts, not
+  bundled with the answer), and runs the actual generation in a background thread
+  (`_run_stateful_generation`, started via `contextvars.copy_context().run(...)` so OTel spans
+  still nest under the request's trace instead of becoming orphaned roots) that's fully
+  decoupled from the client connection — it always persists the reply (or, on failure, a neutral
+  `FAILURE_NOTICE` message) regardless of what happens to the original SSE connection.
+  `ChatPage.tsx` sets a `rag-pending-answer:<id>` localStorage marker when a stream starts,
+  cleared only on explicit `done`/`error` (never in `finally`), and on any mount/remount checks
+  for a trailing unanswered question + that marker to trigger a recovery poll (2s interval, 2min
+  timeout with a clear fallback message, guarded against a race if the user's since switched
+  conversations). Verified: backend 556 passed, frontend 86 passed, `ruff`/`mypy --strict`/
+  `tsc -b`/`oxlint` all clean. Not live-re-verified against the real deployment. Merged to
+  `develop` via PR #64.
+- **Feedback-collection strategy discussed, not implemented (2026-09-25)**: user pointed out
+  ERP-087's dashboard data is the fixed golden dataset, not live traffic (correctly — that's
+  exactly ERP-097's gap, not yet built), and separately raised that there's no real *process* for
+  capturing live user feedback beyond it being manually relayed to a session ad hoc. Recommended
+  two non-exclusive options: (a) cheap — log raw feedback into a `.ai/memory/` inbox note the
+  moment it's heard, decoupled from ticket-triage; (b) more complete — an in-app feedback widget
+  writing to a table, probably only worth it if a *future* portfolio project (ADR-008) wants it
+  too. User said "not a priority now" — no decision made, nothing built. Revisit if this comes up
+  again rather than re-deriving the same two options from scratch.
 - **ERP-088 Done, spun off as ERP-097 (2026-09-24)**: decided async sampling of real production
   `(query, answer, context)` tuples over inline judging (rejected — adds judge-LLM latency to
   every request, working against ERP-091) or relying on thumbs up/down alone (confirmed already
