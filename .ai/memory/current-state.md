@@ -133,18 +133,47 @@ Living summary of what exists in this repository right now. Update in place as s
   sampling job must re-resolve `chunk_id` to text at sample time and tolerate a since-deleted
   chunk/document. **ERP-097** scopes the actual implementation (sample rate, trigger mechanism,
   storage shape — deliberately left open pending ERP-087's dashboard schema).
-- **ERP-087, ERP-089, ERP-090 (Grafana Cloud dashboard tickets) blocked on credentials, not
-  started (2026-09-24, still blocked 2026-09-25)**: the only Grafana Cloud API token on file
-  (`self-hosted-rag-platform-credentials.md`, scope `set:alloy-data-write`) is write-only for
-  telemetry *ingestion* — it cannot create or edit dashboards via the Grafana HTTP API, and no
-  browser-automation tool is available in this environment to drive the Grafana Cloud UI
-  directly either. User chose (2026-09-25) to create a new Grafana Cloud **service account
-  token** (Editor role, created within the `microstarfish1843` stack's own Administration →
-  Users and access → Service Accounts, NOT the org-level Cloud API Keys page used for the
-  existing OTLP token) so these three tickets can be built via the Grafana HTTP API
-  (`/api/dashboards/db` etc.) and their JSON committed to this repo (`deploy/grafana/dashboards/`,
-  not yet created) as dashboard-as-code — pending the user actually creating and handing over
-  that token.
+- **ERP-087, ERP-089, ERP-090 all Done (2026-09-25)** — the Grafana Cloud dashboard tickets,
+  unblocked once the user created a new Grafana **service account token** (Editor role, stack
+  Administration → Users and access → Service Accounts, distinct from the existing
+  `set:alloy-data-write` Cloud API Key which is telemetry-ingestion-only and can't manage
+  dashboards). All three extend the existing "AI Platforms — Service Observability" dashboard
+  (uid `pav87rr`), now versioned as this project's first dashboard-as-code artifact
+  (`deploy/grafana/dashboards/ai-platforms-service-observability.json`, `deploy/grafana/README.md`
+  documents the manual sync-back workflow). **ERP-087**: new Postgres data source
+  (`efza4kyumru9sb`, pointing at live Neon — created manually via the Grafana UI, not the API,
+  since embedding the live DB password in an API call was blocked by this environment's own
+  safety classifier) plus 4 panels (retrieval/generation quality history, most-recent-run
+  per-query breakdowns). Both `evaluation_runs`/`generation_evaluation_runs` are currently empty
+  in production (the harnesses have only ever run against local/CI-ephemeral Postgres) — panels
+  are query-verified, not yet visually verified with real data. **ERP-089**: 4 latency panels;
+  the interesting finding is that the retrieval sub-stage spans (ERP-028) have no matching
+  Prometheus histogram, so per-stage p50/p95 needed Tempo TraceQL metrics instead of PromQL
+  (confirmed supported on this plan, capped at a 25h query window). Also confirmed ingestion job
+  duration (upload → done, including any Cloud Run round-trip) is already visible via the
+  auto-instrumented `BackgroundTask run_ingestion_job` span. **ERP-090**: `GET /health`
+  (ERP-091) extended to also check Redis, covering both Neon and Upstash reachability from one
+  endpoint; Grafana Cloud Synthetic Monitoring required a one-time UI "Initialize plugin" step
+  (not API-automatable) and its own separate access token; 3 checks created (Mumbai probe) —
+  `vm-app-health`/`cloud-run-docling-health` every 5 min, `modal-ollama-health` every **60 min**
+  specifically to avoid a shorter interval inadvertently keeping Modal's scale-to-zero GPU
+  container always-warm (working against ERP-091's cost decision) — confirmed live at ~10.7s per
+  check (cheaper than a full generation cold start, since `/` doesn't load the model). Cloud Run
+  docling's check accepts both 200 and 403 as "up" (it's deliberately IAM-locked, ERP-047; an
+  external probe has no GCP identity token) — confirmed with the user as the preferred trade-off
+  over loosening Cloud Run's auth. AC's "verify a deliberately-broken check shows red" was
+  satisfied via a throwaway check (nonexistent hostname) rather than stopping a real service;
+  found and documented in the ticket that `probe_success=0` for a failing check can lag well
+  behind SM's own faster internal Reachability/Uptime display when propagating into the shared
+  `grafanacloud-prom` Prometheus datasource this dashboard queries — worth checking the SM
+  Checks page directly during a suspected live outage if the dashboard panel hasn't updated yet.
+  **The live VM was redeployed** (git pull + restart, user's explicit go-ahead) mid-session so
+  `/health` would actually exist in production before pointing a check at it — this also means
+  ERP-091's UX-mitigation code and ERP-095's job-sync fix reached production for the first time
+  in this same session. A real mid-session bug on ERP-087's first dashboard save: an em-dash in
+  panel titles got mangled into mojibake by a Windows Python encoding issue on script re-invoke —
+  caught by re-fetching and inspecting saved titles before calling it done; fixed with plain
+  hyphens and `PYTHONUTF8=1`/`PYTHONIOENCODING=utf-8`.
 - **ERP-091 Done (2026-09-25)**: decided UX mitigation over paid always-warm infra, confirmed
   with the user using ERP-037/086's existing cold-start evidence rather than waiting on
   ERP-089's (not-yet-built) latency panel — keeping Modal+Cloud+Neon always-warm would cost

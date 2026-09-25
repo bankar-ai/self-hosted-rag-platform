@@ -695,6 +695,145 @@
       ],
       "title": "Ingestion job duration, p50/p95 (upload accepted -> job done, includes any Cloud Run docling round-trip)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      },
+      "id": 30,
+      "panels": [],
+      "title": "Service Status (ERP-090)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Grafana Cloud Synthetic Monitoring checks (ERP-090), probed from Mumbai every 5 minutes (vm-app-health, cloud-run-docling-health) or 60 minutes (modal-ollama-health -- a shorter interval would keep Modal's scale-to-zero GPU container artificially warm, working against ERP-091's cost decision). cloud-run-docling-health accepts both 200 and 403 as 'up' -- the service is deliberately IAM-locked (ERP-047), so an external probe with no GCP identity token gets 403 even when healthy; 403 there means reachable, not broken.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "UP"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "NO DATA",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "id": 31,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "probe_success{job=~\"vm-app-health|cloud-run-docling-health|modal-ollama-health\"}",
+          "instant": true,
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Service up/down (VM app, Cloud Run docling, Modal Ollama)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "description": "Modal's check will show a genuinely high value (up to ~60s) on most executions -- at a 60-minute interval, its scale-to-zero container has almost always spun down between checks, so this check itself pays the same cold-start cost ERP-091 already documented, not a regression.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "spanNulls": false
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "probe_duration_seconds{job=~\"vm-app-health|cloud-run-docling-health|modal-ollama-health\"}",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Response time by service",
+      "type": "timeseries"
     }
   ],
   "preload": false,
@@ -765,5 +904,5 @@
   "timezone": "browser",
   "title": "AI Platforms — Service Observability",
   "uid": "pav87rr",
-  "version": 6
+  "version": 7
 }
