@@ -144,9 +144,18 @@ Living summary of what exists in this repository right now. Update in place as s
   (`efza4kyumru9sb`, pointing at live Neon — created manually via the Grafana UI, not the API,
   since embedding the live DB password in an API call was blocked by this environment's own
   safety classifier) plus 4 panels (retrieval/generation quality history, most-recent-run
-  per-query breakdowns). Both `evaluation_runs`/`generation_evaluation_runs` are currently empty
-  in production (the harnesses have only ever run against local/CI-ephemeral Postgres) — panels
-  are query-verified, not yet visually verified with real data. **ERP-089**: 4 latency panels;
+  per-query breakdowns). Both `evaluation_runs`/`generation_evaluation_runs` were initially empty
+  in production (the harnesses had only ever run against local/CI-ephemeral Postgres) — **seeded
+  with real data same-day** (user's request): ran both harnesses from the VM itself (`git pull`'d
+  `.env` already points at live Neon/Modal), retrieval matching the ERP-029/041 baseline exactly
+  (Precision@3=0.333, Recall@3=1.0, MRR=1.0), generation via the Ollama judge fallback
+  (Faithfulness=1.0, Answer Relevancy=0.7, Context Precision=0.818). Confirmed zero leftover
+  `eval-*@internal` users afterward — cleanup worked against live Neon, not just in tests. Real
+  gotcha hit getting there: `.env`'s `DATABASE_URL` has an unescaped `&`
+  (`...require&channel_binding=require`), which breaks a naive `source .env` over SSH (bash
+  treats `&` as backgrounding, `DATABASE_URL` ends up silently unset) — systemd's
+  `EnvironmentFile=` doesn't have this problem, only manual one-off invocations do; worked around
+  with a `while IFS='=' read` loop instead of `source`. **ERP-089**: 4 latency panels;
   the interesting finding is that the retrieval sub-stage spans (ERP-028) have no matching
   Prometheus histogram, so per-stage p50/p95 needed Tempo TraceQL metrics instead of PromQL
   (confirmed supported on this plan, capped at a 25h query window). Also confirmed ingestion job
