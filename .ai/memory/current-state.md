@@ -134,16 +134,33 @@ Living summary of what exists in this repository right now. Update in place as s
   chunk/document. **ERP-097** scopes the actual implementation (sample rate, trigger mechanism,
   storage shape — deliberately left open pending ERP-087's dashboard schema).
 - **ERP-087, ERP-089, ERP-090 (Grafana Cloud dashboard tickets) blocked on credentials, not
-  started (2026-09-24)**: the only Grafana Cloud API token on file
+  started (2026-09-24, still blocked 2026-09-25)**: the only Grafana Cloud API token on file
   (`self-hosted-rag-platform-credentials.md`, scope `set:alloy-data-write`) is write-only for
   telemetry *ingestion* — it cannot create or edit dashboards via the Grafana HTTP API, and no
   browser-automation tool is available in this environment to drive the Grafana Cloud UI
-  directly either. These three tickets need either a new API token scoped for dashboard
-  management, or the user to apply dashboard changes manually in the Grafana UI (this session can
-  prepare the exact panel JSON/PromQL/LogQL/SQL to paste in, on request). **ERP-091** also extended
-  with a third latency surface: login taking 3-5+ seconds, hypothesized as Neon's own
-  serverless-Postgres cold start (a third independent cold-start surface alongside Modal and
-  Cloud Run).
+  directly either. User chose (2026-09-25) to create a new Grafana Cloud **service account
+  token** (Editor role, created within the `microstarfish1843` stack's own Administration →
+  Users and access → Service Accounts, NOT the org-level Cloud API Keys page used for the
+  existing OTLP token) so these three tickets can be built via the Grafana HTTP API
+  (`/api/dashboards/db` etc.) and their JSON committed to this repo (`deploy/grafana/dashboards/`,
+  not yet created) as dashboard-as-code — pending the user actually creating and handing over
+  that token.
+- **ERP-091 Done (2026-09-25)**: decided UX mitigation over paid always-warm infra, confirmed
+  with the user using ERP-037/086's existing cold-start evidence rather than waiting on
+  ERP-089's (not-yet-built) latency panel — keeping Modal+Cloud+Neon always-warm would cost
+  ~$600-650/month combined against ADR-008's explicit free-tier/bounded-test scope. Shipped:
+  `GET /health` (`app/core/router.py`, new — unauthenticated, touches Postgres, doubles as an
+  ERP-090 uptime-check target and a login-page Neon pre-warm ping) and `POST /generation/warmup`
+  (pings Ollama's cheap `list()` endpoint via `OllamaLLMClient.ping()`, fired by the chat page on
+  mount). Frontend hints: `LoginPage.tsx` gained a real submitting state (there was none before)
+  plus a slow-hint after 2s; `ChatPage.tsx`'s typing indicator gains a cold-start hint after 5s
+  with zero tokens; `DocumentsPage.tsx` shows a hint for a job still "processing" past 20s, using
+  a new `startedAt` field on `RecentDocument` (`documentsStore.ts`) that survives repeated polls
+  unlike `lastUpdated`. `ChatPage.tsx` had zero test coverage before this ticket — added
+  `ChatPage.test.tsx` covering the new behavior only, not a full backfill. Verified: backend full
+  suite 553 passed, frontend full suite 84 passed, `tsc -b`/`oxlint`/`ruff`/`mypy --strict` clean.
+  **Not live-verified** against a real cold start on the live deployment. Merged to `develop` via
+  PR #62.
 - **ERP-092, ERP-093, ERP-094 all Done, built via `superpowers:subagent-driven-development`
   (2026-09-24)**: **ERP-092** — an intro/onboarding surface, both a one-time first-login modal
   (`IntroModal.tsx`, gated on `localStorage` + authenticated state) and a permanent `/about`
