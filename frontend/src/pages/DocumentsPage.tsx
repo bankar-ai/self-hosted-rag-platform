@@ -13,6 +13,12 @@ import type {
 
 const POLL_INTERVAL_MS = 2000;
 
+// ERP-091: how long a job can sit in "processing" before showing a cold-start hint -- the
+// OCR-fallback path (Cloud Run docling, scale-to-zero) has a documented 1-2 minute cold start
+// (ERP-086), well above ordinary fast-path processing time, so a job still processing past this
+// threshold is likely mid-cold-start rather than just slow.
+const PROCESSING_HINT_DELAY_MS = 20_000;
+
 // Must match the live `INGESTION_MAX_UPLOAD_SIZE_BYTES` backend setting (ERP-051) -- there is
 // no settings-introspection endpoint, so this is a matching constant, not a fetched value.
 const MAX_UPLOAD_SIZE_BYTES = 20_000_000;
@@ -106,9 +112,14 @@ export default function DocumentsPage() {
   }
   const scopedUserId = userId;
 
+  // Preserves `startedAt` across repeated polls of the same job (ERP-091) -- carrying it
+  // forward here, rather than requiring every call site to know/pass it, is what keeps it a
+  // stable "first seen" timestamp instead of drifting forward on every 2s poll tick the way
+  // `lastUpdated` deliberately does.
   function updateInProgress(doc: RecentDocument): void {
     const store = getDocumentsStore(scopedUserId);
-    store.upsert(doc);
+    const existing = store.list().find((d) => d.id === doc.id);
+    store.upsert({ ...doc, startedAt: existing?.startedAt ?? doc.startedAt ?? Date.now() });
     setInProgress(store.list().filter((d) => d.status !== "done"));
   }
 
@@ -458,6 +469,14 @@ export default function DocumentsPage() {
                 <div>
                   <p className="font-medium text-slate-900">{doc.title}</p>
                   {doc.error && <p className="mt-1 text-sm text-red-600">{doc.error}</p>}
+                  {doc.status === "processing" &&
+                    doc.startedAt !== undefined &&
+                    Date.now() - doc.startedAt > PROCESSING_HINT_DELAY_MS && (
+                      <p className="mt-1 text-xs text-slate-400">
+                        Complex documents may need extra processing time (up to a couple of
+                        minutes).
+                      </p>
+                    )}
                 </div>
                 <div className="flex items-center gap-2">
                   <span

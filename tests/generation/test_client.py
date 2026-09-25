@@ -40,6 +40,27 @@ def test_generate_calls_ollama_with_system_and_user_messages(monkeypatch):
     ]
 
 
+def test_ping_calls_list_and_returns_nothing(monkeypatch):
+    class _FakeListingOllamaClient:
+        def __init__(self, host):
+            self.host = host
+            self.list_calls = 0
+
+        def list(self):
+            self.list_calls += 1
+            return {"models": []}
+
+    fake = _FakeListingOllamaClient(host="http://fake:11434")
+    monkeypatch.setattr("app.generation.client.ollama.Client", lambda host: fake)
+    settings = GenerationSettings(ollama_host="http://fake:11434", model="test-model")
+
+    client = OllamaLLMClient(settings)
+    result = client.ping()
+
+    assert result is None
+    assert fake.list_calls == 1
+
+
 def test_generate_stream_calls_ollama_with_stream_true_and_yields_content(monkeypatch):
     class _FakeStreamingOllamaClient:
         def __init__(self, host):

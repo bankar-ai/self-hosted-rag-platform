@@ -44,6 +44,10 @@ def _call_generation_query_stream():
     return client.post("/generation/query/stream", json={"query": "anything"})
 
 
+def _call_generation_warmup():
+    return client.post("/generation/warmup")
+
+
 def _call_get_conversation():
     return client.get(f"/conversations/{_DUMMY_CONVERSATION_ID}")
 
@@ -70,6 +74,7 @@ _PROTECTED_ROUTES = [
     pytest.param(_call_retrieval_query, id="POST /retrieval/query"),
     pytest.param(_call_generation_query, id="POST /generation/query"),
     pytest.param(_call_generation_query_stream, id="POST /generation/query/stream"),
+    pytest.param(_call_generation_warmup, id="POST /generation/warmup"),
     pytest.param(_call_get_conversation, id="GET /conversations/{id}"),
     pytest.param(_call_admin_list_users, id="GET /admin/users"),
     pytest.param(_call_admin_update_user, id="PATCH /admin/users/{user_id}"),
@@ -82,3 +87,10 @@ _PROTECTED_ROUTES = [
 def test_protected_route_returns_401_without_authorization_header(make_request):
     response = make_request()
     assert response.status_code == 401
+
+
+def test_health_is_deliberately_public_unlike_every_route_above():
+    # ERP-090/ERP-091: an external uptime check and the pre-auth login page both need to call
+    # this with no token -- the contrast with every route above is the point of this test.
+    response = client.get("/health")
+    assert response.status_code == 200
