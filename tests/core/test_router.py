@@ -27,3 +27,15 @@ def test_health_returns_503_when_database_is_unreachable(monkeypatch):
     response = client.get("/health")
 
     assert response.status_code == 503
+
+
+def test_health_returns_503_when_redis_is_unreachable(monkeypatch):
+    monkeypatch.setenv("EMBEDDING_REDIS_URL", "redis://localhost:1/0")
+    from app.embedding.config import get_embedding_settings
+
+    get_embedding_settings.cache_clear()
+    try:
+        response = client.get("/health")
+        assert response.status_code == 503
+    finally:
+        get_embedding_settings.cache_clear()
