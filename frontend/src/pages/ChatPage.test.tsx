@@ -31,10 +31,15 @@ function sseResponse(chunks: string[], delayMs = 0): Response {
   return new Response(stream);
 }
 
-function stubChatFetch(streamResponse: () => Response) {
+function stubChatFetch(
+  streamResponse: () => Response,
+  extra?: (url: string) => Response | undefined
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string) => {
+      const extraResponse = extra?.(url);
+      if (extraResponse) return Promise.resolve(extraResponse);
       if (url.includes("/auth/me")) {
         return Promise.resolve(
           new Response(
@@ -132,5 +137,71 @@ describe("ChatPage", () => {
 
     await screen.findByText("hi");
     expect(screen.queryByText(/waking up the model/i)).not.toBeInTheDocument();
+  });
+
+  describe("ERP-096: recovering an answer this browser never saw arrive live", () => {
+    const CONVERSATION_ID = "c1";
+
+    function stubRestoredConversation(historyResponses: object[]) {
+      let call = 0;
+      stubChatFetch(
+        () => sseResponse(["event: done\ndata: {}\n\n"]),
+        (url) => {
+          if (url.includes(`/conversations/${CONVERSATION_ID}`)) {
+            const body = historyResponses[Math.min(call, historyResponses.length - 1)];
+            call += 1;
+            return new Response(JSON.stringify(body), { status: 200 });
+          }
+          return undefined;
+        }
+      );
+    }
+
+    beforeEach(() => {
+      localStorage.setItem("rag-active-conversation:u1", CONVERSATION_ID);
+      localStorage.setItem(`rag-pending-answer:${CONVERSATION_ID}`, String(Date.now()));
+    });
+
+    it("polls and recovers the answer once it lands, instead of leaving the question looking unanswered", async () => {
+      const unanswered = { messages: [{ id: "m1", role: "user", content: "question one", feedback: null, citations: [] }] };
+      const answered = {
+        messages: [
+          { id: "m1", role: "user", content: "question one", feedback: null, citations: [] },
+          { id: "m2", role: "assistant", content: "the answer", feedback: null, citations: [] },
+        ],
+      };
+      stubRestoredConversation([unanswered, answered]);
+
+      render(
+        <AuthProvider>
+          <ChatPage />
+        </AuthProvider>
+      );
+
+      await screen.findByText("question one");
+      expect(screen.queryByText("the answer")).not.toBeInTheDocument();
+
+      expect(await screen.findByText("the answer", {}, { timeout: 5000 })).toBeInTheDocument();
+      expect(localStorage.getItem(`rag-pending-answer:${CONVERSATION_ID}`)).toBeNull();
+    });
+
+    it("gives up after timing out rather than polling forever, and clears the marker", async () => {
+      vi.useFakeTimers();
+      const unanswered = { messages: [{ id: "m1", role: "user", content: "question one", feedback: null, citations: [] }] };
+      stubRestoredConversation([unanswered]);
+
+      render(
+        <AuthProvider>
+          <ChatPage />
+        </AuthProvider>
+      );
+
+      await vi.waitFor(() => expect(screen.getByText("question one")).toBeInTheDocument());
+      await vi.advanceTimersByTimeAsync(122_000);
+
+      expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument();
+      expect(localStorage.getItem(`rag-pending-answer:${CONVERSATION_ID}`)).toBeNull();
+      vi.useRealTimers();
+    });
   });
 });
