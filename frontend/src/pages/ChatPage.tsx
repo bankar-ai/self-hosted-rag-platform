@@ -51,6 +51,43 @@ function setStoredConversationId(userId: string, id: string): void {
   }
 }
 
+// ERP-096: marks a conversation as "a question was just sent, no reply confirmed yet" --
+// survives a page refresh or a same-page remount (both of which can otherwise make an
+// in-flight answer look silently lost, even though the backend keeps generating/persisting it
+// regardless of the original connection, see app/generation/service.py's `_run_stateful_generation`).
+// Cleared once this browser has confirmed the reply, whether that's the live stream finishing
+// normally or the recovery poll below finding it after the fact.
+const PENDING_ANSWER_KEY_PREFIX = "rag-pending-answer:";
+const PENDING_ANSWER_POLL_INTERVAL_MS = 2000;
+// Well above any expected generation time (including a Modal cold start, ERP-091) -- past this,
+// something is genuinely wrong rather than just slow, so recovery gives up with a clear message
+// instead of polling forever.
+const PENDING_ANSWER_TIMEOUT_MS = 120_000;
+
+function hasPendingAnswerMarker(conversationId: string): boolean {
+  try {
+    return localStorage.getItem(PENDING_ANSWER_KEY_PREFIX + conversationId) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function setPendingAnswerMarker(conversationId: string): void {
+  try {
+    localStorage.setItem(PENDING_ANSWER_KEY_PREFIX + conversationId, String(Date.now()));
+  } catch {
+    // best-effort only
+  }
+}
+
+function clearPendingAnswerMarker(conversationId: string): void {
+  try {
+    localStorage.removeItem(PENDING_ANSWER_KEY_PREFIX + conversationId);
+  } catch {
+    // best-effort only
+  }
+}
+
 /** "document.pdf, p. 3" or "document.pdf, p. 3-4" when the citation spans multiple pages. */
 function formatCitation(citation: Citation): string {
   const pages =
@@ -94,6 +131,13 @@ export default function ChatPage() {
   const [conversationId, setConversationId] = useState<string>(
     () => (userId && getStoredConversationId(userId)) || newConversationId()
   );
+  // ERP-096: lets `pollForPendingAnswer` (a detached async loop with no lifecycle of its own)
+  // check whether the user has since switched to a different conversation, so a slow recovery
+  // poll can never overwrite what's currently on screen with a stale conversation's messages.
+  const conversationIdRef = useRef(conversationId);
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -226,15 +270,70 @@ export default function ChatPage() {
     const response = await apiFetch(`/conversations/${id}`);
     if (!response.ok) return;
     const body = (await response.json()) as ConversationHistoryResponse;
-    setMessages(
-      body.messages.map((message) => ({
-        id: message.id,
-        role: message.role === "user" ? "user" : "assistant",
-        content: message.content,
-        feedback: message.feedback,
-        citations: message.citations,
-      }))
-    );
+    const loadedMessages: ChatMessage[] = body.messages.map((message) => ({
+      id: message.id,
+      role: message.role === "user" ? "user" : "assistant",
+      content: message.content,
+      feedback: message.feedback,
+      citations: message.citations,
+    }));
+    setMessages(loadedMessages);
+
+    // ERP-096: a trailing user message with no reply, combined with a marker this same
+    // browser set right before sending it, means the answer never got confirmed here --
+    // interrupted by a refresh, a same-page remount, or some other dropped connection. The
+    // backend keeps generating/persisting regardless of that (see `_run_stateful_generation`),
+    // so recover by polling instead of leaving the question looking permanently unanswered.
+    const lastMessage = loadedMessages[loadedMessages.length - 1];
+    if (lastMessage?.role === "user" && hasPendingAnswerMarker(id)) {
+      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+      setIsStreaming(true);
+      void pollForPendingAnswer(id, loadedMessages.length);
+    }
+  }
+
+  /** Recovers an answer this browser never got to see arrive live (ERP-096) -- polls
+   * conversation history until a new message appears (the real reply, or the failure notice
+   * `_run_stateful_generation` persists if generation itself failed) or `PENDING_ANSWER_TIMEOUT_MS`
+   * passes with neither, at which point it gives up with a clear message rather than spinning
+   * forever on a question that may never resolve. */
+  async function pollForPendingAnswer(id: string, knownMessageCount: number): Promise<void> {
+    const deadline = Date.now() + PENDING_ANSWER_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, PENDING_ANSWER_POLL_INTERVAL_MS));
+      // The user may have switched to a different conversation while this poll was waiting --
+      // stop touching shared UI state, but keep looping so the marker still gets cleared once
+      // the answer actually resolves (or the timeout below gives up).
+      const stillViewingThisConversation = conversationIdRef.current === id;
+
+      const response = await apiFetch(`/conversations/${id}`);
+      if (!response.ok) continue;
+      const body = (await response.json()) as ConversationHistoryResponse;
+      if (body.messages.length > knownMessageCount) {
+        if (stillViewingThisConversation) {
+          setMessages(
+            body.messages.map((message) => ({
+              id: message.id,
+              role: message.role === "user" ? "user" : "assistant",
+              content: message.content,
+              feedback: message.feedback,
+              citations: message.citations,
+            }))
+          );
+          setIsStreaming(false);
+        }
+        clearPendingAnswerMarker(id);
+        return;
+      }
+    }
+    if (conversationIdRef.current === id) {
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: "error", content: "This answer is taking longer than expected. Please try asking again." },
+      ]);
+      setIsStreaming(false);
+    }
+    clearPendingAnswerMarker(id);
   }
 
   async function selectConversation(id: string): Promise<void> {
@@ -324,6 +423,12 @@ export default function ChatPage() {
       let assistantText = "";
       let citations: Citation[] = [];
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+      // ERP-096: set once the backend has actually started generating (persisted server-side
+      // regardless of what happens to this connection from here) -- only cleared once this
+      // browser gets explicit confirmation of how it ended ("done" or "error" below), never in
+      // `finally`, since a client-side network hiccup mid-stream is exactly the case this
+      // marker needs to survive so a later reload/remount can recover the answer.
+      setPendingAnswerMarker(conversationId);
 
       for await (const sseEvent of parseSseStream(response)) {
         if (sseEvent.event === "citations") {
@@ -345,12 +450,14 @@ export default function ChatPage() {
               { role: "assistant", content: assistantText, citations, id: assistantMessageId },
             ]);
           }
+          clearPendingAnswerMarker(conversationId);
         } else if (sseEvent.event === "error") {
           setMessages((prev) => [
             ...prev.slice(0, -1),
             { role: "assistant", content: assistantText, citations },
             { role: "error", content: (sseEvent.data as { detail: string }).detail },
           ]);
+          clearPendingAnswerMarker(conversationId);
         }
       }
 
