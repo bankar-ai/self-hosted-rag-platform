@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as apiClient from "../lib/apiClient";
 import { AuthProvider } from "../lib/AuthContext";
+import { getDocumentsStore } from "../lib/documentsStore";
 import { setTokens } from "../lib/tokenStorage";
 import DocumentsPage from "./DocumentsPage";
 
@@ -32,6 +33,9 @@ function stubAuthAndEmptyDocuments(extra?: (url: string, init?: RequestInit) => 
       if (extraResponse) return Promise.resolve(extraResponse);
       if (url.endsWith("/documents")) {
         return Promise.resolve(new Response(JSON.stringify({ documents: [] }), { status: 200 }));
+      }
+      if (url.endsWith("/ingestion/jobs")) {
+        return Promise.resolve(new Response(JSON.stringify({ jobs: [] }), { status: 200 }));
       }
       return Promise.resolve(new Response("{}", { status: 200 }));
     })
@@ -380,6 +384,76 @@ describe("DocumentsPage", () => {
       expect(screen.getByRole("button", { name: "Delete" })).not.toBeDisabled()
     );
     expect(screen.getByText("existing.pdf")).toBeInTheDocument();
+  });
+
+  it("shows an in-progress job from another device via GET /ingestion/jobs (ERP-095)", async () => {
+    // Nothing in localStorage for this job -- it's discoverable purely because the server
+    // reports it as one of this account's active jobs, simulating a second device/session.
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.endsWith("/ingestion/jobs")) {
+        return new Response(
+          JSON.stringify({
+            jobs: [{ job_id: "job-other-device", filename: "from-phone.pdf", status: "processing", error: null }],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/ingestion/jobs/job-other-device")) {
+        // Stays "processing" on every poll -- the point of this test is that the entry is
+        // discoverable and rendered at all, not the full lifecycle to completion.
+        return new Response(JSON.stringify({ status: "processing" }), { status: 200 });
+      }
+      return null;
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    await waitFor(() => expect(screen.getByText("from-phone.pdf")).toBeInTheDocument());
+    expect(screen.getByText("processing")).toBeInTheDocument();
+  });
+
+  it("shows a cold-start hint for a job stuck processing past the threshold (ERP-091)", async () => {
+    getDocumentsStore("u1").upsert({
+      id: "job-slow",
+      title: "scanned.pdf",
+      status: "processing",
+      lastUpdated: Date.now(),
+      startedAt: Date.now() - 25_000,
+    });
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText("scanned.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/complex documents may need extra processing time/i)).toBeInTheDocument();
+  });
+
+  it("does not show a cold-start hint for a job still within the normal processing window", async () => {
+    getDocumentsStore("u1").upsert({
+      id: "job-fast",
+      title: "quick.pdf",
+      status: "processing",
+      lastUpdated: Date.now(),
+      startedAt: Date.now() - 2_000,
+    });
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByText("quick.pdf")).toBeInTheDocument();
+    expect(screen.queryByText(/complex documents may need extra processing time/i)).not.toBeInTheDocument();
   });
 
   it("shows a dismiss button on a failed upload-transfer entry that removes it from the list", async () => {

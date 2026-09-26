@@ -4,9 +4,20 @@ import ConfidenceBadge from "../components/ConfidenceBadge";
 import { apiFetch, uploadWithProgress } from "../lib/apiClient";
 import { useAuth } from "../lib/AuthContext";
 import { getDocumentsStore, type RecentDocument } from "../lib/documentsStore";
-import type { DocumentListResponse, DocumentSummary, JobStatusResponse } from "../lib/types";
+import type {
+  DocumentListResponse,
+  DocumentSummary,
+  JobListResponse,
+  JobStatusResponse,
+} from "../lib/types";
 
 const POLL_INTERVAL_MS = 2000;
+
+// ERP-091: how long a job can sit in "processing" before showing a cold-start hint -- the
+// OCR-fallback path (Cloud Run docling, scale-to-zero) has a documented 1-2 minute cold start
+// (ERP-086), well above ordinary fast-path processing time, so a job still processing past this
+// threshold is likely mid-cold-start rather than just slow.
+const PROCESSING_HINT_DELAY_MS = 20_000;
 
 // Must match the live `INGESTION_MAX_UPLOAD_SIZE_BYTES` backend setting (ERP-051) -- there is
 // no settings-introspection endpoint, so this is a matching constant, not a fetched value.
@@ -32,9 +43,11 @@ interface UploadInFlight {
 
 export default function DocumentsPage() {
   const { userId } = useAuth();
-  // In-flight uploads only (pending/processing/failed) -- still tracked client-side, since a
-  // job that hasn't finished (or never will) has no backend row to read back. A job that
-  // reaches "done" is removed from here as soon as it's confirmed in `serverDocuments`.
+  // In-flight uploads only (pending/processing/failed). Seeded from localStorage for a fast
+  // first paint, then reconciled against `GET /ingestion/jobs` (ERP-095) so a job started from
+  // another device/session -- which has no entry in this browser's localStorage -- still shows
+  // up here instead of only being visible to whichever browser initiated it. A job that reaches
+  // "done" is removed from here as soon as it's confirmed in `serverDocuments`.
   const [inProgress, setInProgress] = useState<RecentDocument[]>(() =>
     userId ? getDocumentsStore(userId).list().filter((doc) => doc.status !== "done") : []
   );
@@ -52,6 +65,10 @@ export default function DocumentsPage() {
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Tracks which job IDs already have a `pollJob` recursive-timeout loop running, so hydrating
+  // active jobs from the server (ERP-095) never starts a second, redundant loop for a job this
+  // same device already kicked off (and is therefore already polling) itself.
+  const pollingJobIdsRef = useRef<Set<string>>(new Set());
 
   async function refreshServerDocuments(): Promise<void> {
     const response = await apiFetch("/documents");
@@ -60,8 +77,31 @@ export default function DocumentsPage() {
     setServerDocuments(body.documents);
   }
 
+  // Reads back the account's active (pending/processing/failed) jobs from the server (ERP-095)
+  // -- not just this browser's own `localStorage` record -- so a job started on another device
+  // (or a prior session on this one) still shows up here instead of only being visible to
+  // whichever browser happened to initiate the upload.
+  async function hydrateActiveJobsFromServer(): Promise<void> {
+    const response = await apiFetch("/ingestion/jobs");
+    if (!response.ok) return;
+    const body = (await response.json()) as JobListResponse;
+    for (const job of body.jobs) {
+      updateInProgress({
+        id: job.job_id,
+        title: job.filename,
+        lastUpdated: Date.now(),
+        status: job.status,
+        error: job.error ?? undefined,
+      });
+      if (job.status === "pending" || job.status === "processing") {
+        ensurePolling(job.job_id, job.filename);
+      }
+    }
+  }
+
   useEffect(() => {
     void refreshServerDocuments();
+    void hydrateActiveJobsFromServer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -72,9 +112,14 @@ export default function DocumentsPage() {
   }
   const scopedUserId = userId;
 
+  // Preserves `startedAt` across repeated polls of the same job (ERP-091) -- carrying it
+  // forward here, rather than requiring every call site to know/pass it, is what keeps it a
+  // stable "first seen" timestamp instead of drifting forward on every 2s poll tick the way
+  // `lastUpdated` deliberately does.
   function updateInProgress(doc: RecentDocument): void {
     const store = getDocumentsStore(scopedUserId);
-    store.upsert(doc);
+    const existing = store.list().find((d) => d.id === doc.id);
+    store.upsert({ ...doc, startedAt: existing?.startedAt ?? doc.startedAt ?? Date.now() });
     setInProgress(store.list().filter((d) => d.status !== "done"));
   }
 
@@ -92,6 +137,7 @@ export default function DocumentsPage() {
   // Full dismiss: the user is walking away from this job entirely, so it's safe to delete the
   // job's uploaded file server-side too. Only ever wire this to an explicit "Dismiss" click.
   async function dismissInProgress(jobId: string): Promise<void> {
+    pollingJobIdsRef.current.delete(jobId);
     await apiFetch(`/ingestion/jobs/${jobId}`, { method: "DELETE" }).catch(() => null);
     clearInProgressLocally(jobId);
   }
@@ -105,6 +151,8 @@ export default function DocumentsPage() {
       setTimeout(() => void pollJob(jobId, filename), POLL_INTERVAL_MS);
       return;
     }
+
+    pollingJobIdsRef.current.delete(jobId);
 
     if (job.status === "failed") {
       updateInProgress({
@@ -122,6 +170,15 @@ export default function DocumentsPage() {
     getDocumentsStore(scopedUserId).remove(jobId);
     setInProgress(getDocumentsStore(scopedUserId).list().filter((d) => d.status !== "done"));
     await refreshServerDocuments();
+  }
+
+  /** Starts a `pollJob` loop for `jobId` unless one is already running -- guards against
+   * hydrating the same active job from the server (ERP-095) while this device is already
+   * polling it because it was the one that started the upload. */
+  function ensurePolling(jobId: string, filename: string): void {
+    if (pollingJobIdsRef.current.has(jobId)) return;
+    pollingJobIdsRef.current.add(jobId);
+    void pollJob(jobId, filename);
   }
 
   async function uploadOne(file: File, existingId?: string): Promise<void> {
@@ -155,7 +212,7 @@ export default function DocumentsPage() {
     setUploadsInFlight((prev) => prev.filter((u) => u.id !== uploadId));
     const { job_id: jobId } = result.body as { job_id: string };
     updateInProgress({ id: jobId, title: file.name, lastUpdated: Date.now(), status: "pending" });
-    void pollJob(jobId, file.name);
+    ensurePolling(jobId, file.name);
   }
 
   function retryUpload(uploadId: string): void {
@@ -288,7 +345,7 @@ export default function DocumentsPage() {
     const { job_id: newJobId } = (await response.json()) as { job_id: string };
     clearInProgressLocally(jobId);
     updateInProgress({ id: newJobId, title: filename, lastUpdated: Date.now(), status: "pending" });
-    void pollJob(newJobId, filename);
+    ensurePolling(newJobId, filename);
   }
 
   return (
@@ -412,6 +469,14 @@ export default function DocumentsPage() {
                 <div>
                   <p className="font-medium text-slate-900">{doc.title}</p>
                   {doc.error && <p className="mt-1 text-sm text-red-600">{doc.error}</p>}
+                  {doc.status === "processing" &&
+                    doc.startedAt !== undefined &&
+                    Date.now() - doc.startedAt > PROCESSING_HINT_DELAY_MS && (
+                      <p className="mt-1 text-xs text-slate-400">
+                        Complex documents may need extra processing time (up to a couple of
+                        minutes).
+                      </p>
+                    )}
                 </div>
                 <div className="flex items-center gap-2">
                   <span

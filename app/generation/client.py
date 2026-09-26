@@ -61,6 +61,16 @@ class OllamaLLMClient:
             _duration_histogram.record(time.monotonic() - start, {"model": self._model})
             return response.message.content or ""
 
+    def ping(self) -> None:
+        """Touch the Ollama server without generating anything (ERP-091).
+
+        Listing local models is the cheapest real request Ollama supports -- used purely to
+        trigger a scale-to-zero backend's (Modal) cold start ahead of an actual generation
+        call, so the ~52-59s cold-start cost (ERP-037) overlaps with the user reading the page
+        instead of landing entirely on their first real message.
+        """
+        self._client.list()
+
     def generate_stream(self, system_prompt: str, user_prompt: str) -> Iterator[str]:
         """Stream `system_prompt`/`user_prompt` to Ollama, yielding response text chunks in order."""
         stream = self._client.chat(

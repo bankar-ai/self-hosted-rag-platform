@@ -1,7 +1,10 @@
 """Grounded answer generation over hybrid-retrieved chunks, with optional multi-turn memory."""
 
+import contextvars
 import logging
+import queue
 import re
+import threading
 import uuid
 from typing import Any, Iterator
 
@@ -43,6 +46,11 @@ logger = logging.getLogger(__name__)
 
 NO_CONTEXT_ANSWER = "I don't have enough information in the ingested documents to answer this question."
 GREETING_ANSWER = "Hello! Ask me a question about your uploaded documents and I'll do my best to help."
+# ERP-096: persisted in place of an assistant reply when background generation fails after the
+# user's turn was already saved -- so a caller who reconnects later (after a refresh or a
+# same-page remount, per ERP-096's investigation) sees a resolved conversation instead of a
+# question that looks permanently unanswered.
+FAILURE_NOTICE = "Something went wrong while generating an answer. Please try asking again."
 
 # ERP-046: a plain greeting/pleasantry with no other content should never reach retrieval or
 # the LLM -- top_k retrieval always returns *something*, regardless of relevance, and a model
@@ -104,6 +112,23 @@ def _citations_for(chunks: list[RetrievedChunk], reranked: bool) -> list[Citatio
         )
         for chunk in chunks
     ]
+
+
+def warmup_llm(llm_client: OllamaLLMClient | None = None) -> None:
+    """Best-effort ping to wake a scale-to-zero LLM backend before a real request needs it.
+
+    (ERP-091). Never raises -- a failed/slow warmup just means the first real request pays the
+    full cold-start cost, exactly as it would have without this call, so a caller can fire this
+    and ignore the outcome entirely.
+    """
+    llm_client = llm_client or OllamaLLMClient(get_generation_settings())
+    try:
+        llm_client.ping()
+    except Exception:
+        logger.warning(
+            "LLM warmup ping failed -- first real request will pay the full cold-start cost",
+            exc_info=True,
+        )
 
 
 def generate(
@@ -246,12 +271,10 @@ def generate_stream(
     "..."})` instead of `"done"` -- callers must treat `"error"` as the end of the stream,
     not attempt to resume iteration.
 
-    Shares `generate()`'s stateless/stateful branching, rewrite, ownership, and persistence
-    semantics exactly (see `generate`'s docstring) -- only the delivery mechanism differs.
-    Persistence for a stateful request happens only after the full answer is assembled,
-    immediately before the `"done"` event, so a client disconnect (which raises
-    `GeneratorExit` at the suspended `yield`) or a mid-generation exception both skip it,
-    leaving conversation history exactly as it was before the request.
+    Shares `generate()`'s stateless/stateful branching, rewrite, and ownership semantics
+    exactly (see `generate`'s docstring) -- only the delivery mechanism, and (for a stateful
+    request) the persistence timing, differ. See `_run_stateful_generation`'s docstring for why
+    persistence is decoupled from this generator's own lifecycle (ERP-096).
     """
     try:
         settings = settings or get_generation_settings()
@@ -298,10 +321,85 @@ def generate_stream(
             )
             history = [ConversationTurn(role=r.role, content=r.content) for r in history_records]
 
-        citations = []
+        # ERP-096: persist the user's turn immediately, before generation even starts -- not
+        # bundled with the assistant's reply at the end. A page refresh, a same-page remount
+        # (e.g. a backgrounded tab getting silently reloaded), or any other disconnect must
+        # never erase the question itself, only (at worst) delay the answer.
+        with session_factory() as write_session:
+            get_or_create_conversation(write_session, conversation_id, owner_id)
+            append_message(write_session, conversation_id, "user", query)
+            write_session.commit()
+
+        event_queue: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue()
+        # Propagates the current OTel trace context (a `contextvars.ContextVar` under the hood)
+        # into the thread -- otherwise every span `_run_stateful_generation` creates (via
+        # retrieval/rewrite/the LLM call) would start a disconnected new root trace instead of
+        # nesting under this request's own trace, since a plain `threading.Thread` starts with
+        # a fresh context by default.
+        worker = threading.Thread(
+            target=contextvars.copy_context().run,
+            args=(
+                _run_stateful_generation,
+                query,
+                top_k,
+                owner_id,
+                rerank,
+                expand_sections,
+                conversation_id,
+                settings,
+                llm_client,
+                document_ids,
+                history,
+                event_queue,
+            ),
+            daemon=True,
+        )
+        worker.start()
+
+        while True:
+            item = event_queue.get()
+            if item is None:
+                return
+            yield item
+    except Exception:
+        logger.exception("Streaming generation failed")
+        yield "error", {"detail": "Generation query failed"}
+
+
+def _run_stateful_generation(
+    query: str,
+    top_k: int,
+    owner_id: uuid.UUID,
+    rerank: bool,
+    expand_sections: bool,
+    conversation_id: uuid.UUID,
+    settings: GenerationSettings,
+    llm_client: LLMClient | None,
+    document_ids: list[str] | None,
+    history: list[ConversationTurn],
+    event_queue: "queue.Queue[tuple[str, dict[str, Any]] | None]",
+) -> None:
+    """Runs rewrite/retrieval/generation and persists the assistant's reply.
+
+    Independent of whether `generate_stream`'s caller is still connected (ERP-096) --
+    `generate_stream` only relays whatever this puts on `event_queue` to a live SSE client --
+    it does not drive this work itself. Run in a background thread (not an asyncio task,
+    since `LLMClient.generate_stream` and the retrieval/rewrite calls are synchronous/blocking)
+    so a client disconnect, which only stops `generate_stream` from being iterated further, can
+    never cut this off mid-generation. Always terminates the queue with a `None` sentinel so
+    `generate_stream`'s relay loop knows to stop.
+
+    On failure, persists a neutral assistant-role notice rather than leaving the user's
+    already-persisted question dangling with no reply forever -- both for a live client (which
+    also gets the `"error"` event directly) and for a caller who reconnects later expecting
+    *something* to have resolved the question it already sees in history.
+    """
+    session_factory = get_session_factory()
+    try:
+        citations: list[Citation] = []
         if _GREETING_RE.match(query):
-            yield "token", {"text": GREETING_ANSWER}
-            yield "citations", {"citations": []}
+            event_queue.put(("token", {"text": GREETING_ANSWER}))
+            event_queue.put(("citations", {"citations": []}))
             answer = GREETING_ANSWER
         else:
             if history:
@@ -319,25 +417,23 @@ def generate_stream(
                 document_ids=document_ids,
             )
             if not chunks:
-                yield "token", {"text": NO_CONTEXT_ANSWER}
-                yield "citations", {"citations": []}
+                event_queue.put(("token", {"text": NO_CONTEXT_ANSWER}))
+                event_queue.put(("citations", {"citations": []}))
                 answer = NO_CONTEXT_ANSWER
             else:
                 llm_client = llm_client or OllamaLLMClient(settings)
                 user_prompt, included_chunks = build_prompt(
                     query, chunks, settings.max_context_chars, history=history
                 )
-                answer_parts = []
+                answer_parts: list[str] = []
                 for piece in llm_client.generate_stream(SYSTEM_PROMPT, user_prompt):
                     answer_parts.append(piece)
-                    yield "token", {"text": piece}
+                    event_queue.put(("token", {"text": piece}))
                 answer = "".join(answer_parts)
                 citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
-                yield "citations", {"citations": [c.model_dump() for c in citations]}
+                event_queue.put(("citations", {"citations": [c.model_dump() for c in citations]}))
 
         with session_factory() as write_session:
-            get_or_create_conversation(write_session, conversation_id, owner_id)
-            append_message(write_session, conversation_id, "user", query)
             assistant_record = append_message(
                 write_session,
                 conversation_id,
@@ -347,13 +443,26 @@ def generate_stream(
             )
             write_session.commit()
 
-        yield "done", {
-            "conversation_id": str(conversation_id),
-            "assistant_message_id": str(assistant_record.id),
-        }
+        event_queue.put(
+            (
+                "done",
+                {
+                    "conversation_id": str(conversation_id),
+                    "assistant_message_id": str(assistant_record.id),
+                },
+            )
+        )
     except Exception:
-        logger.exception("Streaming generation failed")
-        yield "error", {"detail": "Generation query failed"}
+        logger.exception("Streaming generation failed (background)")
+        try:
+            with session_factory() as write_session:
+                append_message(write_session, conversation_id, "assistant", FAILURE_NOTICE)
+                write_session.commit()
+        except Exception:
+            logger.exception("Failed to persist the failure notice itself")
+        event_queue.put(("error", {"detail": "Generation query failed"}))
+    finally:
+        event_queue.put(None)
 
 
 def get_conversation_history(

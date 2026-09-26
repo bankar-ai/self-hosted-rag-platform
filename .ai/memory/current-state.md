@@ -94,17 +94,135 @@ Living summary of what exists in this repository right now. Update in place as s
 
 ## Next Planned Work
 
-- **Two more bugs logged from live post-deploy feedback, not yet started (2026-09-24)**:
-  **ERP-095** — upload/document status not synced across devices for the same account; root
-  cause found via code investigation (`documentsStore.ts` tracks in-progress status in
-  per-browser `localStorage`, only the finished document list is server-synced), not yet
-  live-verified. **ERP-096** — a Q&A pair visually disappears when switching browser tabs
-  mid-stream, reappearing once the answer finishes; two candidate explanations (browser
-  background-tab throttling vs. an unstable `key={index}` in the message list) neither
-  confirmed — needs live reproduction with devtools before any fix. **ERP-091** also extended
-  with a third latency surface: login taking 3-5+ seconds, hypothesized as Neon's own
-  serverless-Postgres cold start (a third independent cold-start surface alongside Modal and
-  Cloud Run).
+- **`develop` promoted to `main` and fully deployed live (2026-09-24, PR #60, merge commit
+  `c7bce9e`)**: brings ERP-085, ERP-086, ERP-092, ERP-093, ERP-094 (and all doc-only ticket
+  logging since the last promotion, PR #53) to production. No new DB migrations in this range.
+  **Operational discovery made during this deploy**: the VM's `~/app` checkout actually tracks
+  the `develop` branch, not `main` — a `main` promotion PR alone does not reach production; the
+  VM needs its own `git pull` + `uv sync` + `systemctl restart rag-platform` too (now documented
+  in `gcp-deployment-tracker.md`). Backend redeployed and smoke-checked (`200` on `/docs`,
+  service active); Vercel frontend deployment confirmed `success` for the `main` tip via the
+  GitHub commit-status API. This is why ERP-085's mobile fixes (merged to `develop` 2026-09-23)
+  were still not visible in live feedback gathered later that day — they'd never actually
+  reached either deploy target until now.
+- **ERP-095 Done (2026-09-24)**: added `GET /ingestion/jobs` (caller's PENDING/PROCESSING/FAILED
+  jobs, account-wide — `app/ingestion/jobs.py`'s `list_active_jobs`) so a second device can
+  discover a job it didn't itself start, instead of relying solely on the initiating browser's
+  `localStorage` record. `DocumentsPage.tsx` now hydrates from this endpoint on mount alongside
+  the existing localStorage-seeded state, guarded by a `pollingJobIdsRef` set against
+  double-polling a job this device already started. Verified: backend full suite 544 passed,
+  frontend full suite 76 passed, `tsc -b`/`oxlint` clean. **Not live-verified**: the ticket's own
+  two-device repro step — no second device/browser was available in the session that built this;
+  flagged in the ticket as a recommended follow-up check, not a blocker on the merge. Merged to
+  `develop` via PR #61 (2026-09-24).
+- **ERP-096 Done (2026-09-25)**: the user supplied a screen recording + 2 HAR captures live-
+  reproducing both scenarios, resolving what code-only investigation on 2026-09-24 couldn't.
+  Turned out to be **two distinct mechanisms**: refresh mid-stream is a real full page
+  navigation (confirmed: a `document`-type request in the HAR, a video frame with the cursor on
+  the reload button) that aborts the connection before persistence — losing the question too,
+  not just the answer; tab-switch is a same-page React remount (proven via `ChatPage`'s three
+  mount-effects firing twice, 31s apart, with zero `document`-type requests — not deferred
+  repaint, not a page reload). The remount's exact trigger was never identified even after
+  grepping the actual deployed, minified production JS bundle for every visibility/lifecycle API
+  (`visibilitychange`/`pageshow`/`freeze`/`resume`/`bfcache` — zero matches anywhere). Rather
+  than keep chasing that, fixed the shared root problem instead: `app/generation/service.py`'s
+  `generate_stream` now persists the user's question immediately (before generation starts, not
+  bundled with the answer), and runs the actual generation in a background thread
+  (`_run_stateful_generation`, started via `contextvars.copy_context().run(...)` so OTel spans
+  still nest under the request's trace instead of becoming orphaned roots) that's fully
+  decoupled from the client connection — it always persists the reply (or, on failure, a neutral
+  `FAILURE_NOTICE` message) regardless of what happens to the original SSE connection.
+  `ChatPage.tsx` sets a `rag-pending-answer:<id>` localStorage marker when a stream starts,
+  cleared only on explicit `done`/`error` (never in `finally`), and on any mount/remount checks
+  for a trailing unanswered question + that marker to trigger a recovery poll (2s interval, 2min
+  timeout with a clear fallback message, guarded against a race if the user's since switched
+  conversations). Verified: backend 556 passed, frontend 86 passed, `ruff`/`mypy --strict`/
+  `tsc -b`/`oxlint` all clean. Not live-re-verified against the real deployment. Merged to
+  `develop` via PR #64.
+- **Feedback-collection strategy discussed, not implemented (2026-09-25)**: user pointed out
+  ERP-087's dashboard data is the fixed golden dataset, not live traffic (correctly — that's
+  exactly ERP-097's gap, not yet built), and separately raised that there's no real *process* for
+  capturing live user feedback beyond it being manually relayed to a session ad hoc. Recommended
+  two non-exclusive options: (a) cheap — log raw feedback into a `.ai/memory/` inbox note the
+  moment it's heard, decoupled from ticket-triage; (b) more complete — an in-app feedback widget
+  writing to a table, probably only worth it if a *future* portfolio project (ADR-008) wants it
+  too. User said "not a priority now" — no decision made, nothing built. Revisit if this comes up
+  again rather than re-deriving the same two options from scratch.
+- **ERP-088 Done, spun off as ERP-097 (2026-09-24)**: decided async sampling of real production
+  `(query, answer, context)` tuples over inline judging (rejected — adds judge-LLM latency to
+  every request, working against ERP-091) or relying on thumbs up/down alone (confirmed already
+  persisted server-side via `MessageFeedbackRecord`/`message_feedback`, ERP-045 — a real but
+  low-response-rate complementary signal, not sufficient alone). Key implementation constraint
+  found: `ConversationMessage.citations` stores citation metadata only, not chunk text — a
+  sampling job must re-resolve `chunk_id` to text at sample time and tolerate a since-deleted
+  chunk/document. **ERP-097** scopes the actual implementation (sample rate, trigger mechanism,
+  storage shape — deliberately left open pending ERP-087's dashboard schema).
+- **ERP-087, ERP-089, ERP-090 all Done (2026-09-25)** — the Grafana Cloud dashboard tickets,
+  unblocked once the user created a new Grafana **service account token** (Editor role, stack
+  Administration → Users and access → Service Accounts, distinct from the existing
+  `set:alloy-data-write` Cloud API Key which is telemetry-ingestion-only and can't manage
+  dashboards). All three extend the existing "AI Platforms — Service Observability" dashboard
+  (uid `pav87rr`), now versioned as this project's first dashboard-as-code artifact
+  (`deploy/grafana/dashboards/ai-platforms-service-observability.json`, `deploy/grafana/README.md`
+  documents the manual sync-back workflow). **ERP-087**: new Postgres data source
+  (`efza4kyumru9sb`, pointing at live Neon — created manually via the Grafana UI, not the API,
+  since embedding the live DB password in an API call was blocked by this environment's own
+  safety classifier) plus 4 panels (retrieval/generation quality history, most-recent-run
+  per-query breakdowns). Both `evaluation_runs`/`generation_evaluation_runs` were initially empty
+  in production (the harnesses had only ever run against local/CI-ephemeral Postgres) — **seeded
+  with real data same-day** (user's request): ran both harnesses from the VM itself (`git pull`'d
+  `.env` already points at live Neon/Modal), retrieval matching the ERP-029/041 baseline exactly
+  (Precision@3=0.333, Recall@3=1.0, MRR=1.0), generation via the Ollama judge fallback
+  (Faithfulness=1.0, Answer Relevancy=0.7, Context Precision=0.818). Confirmed zero leftover
+  `eval-*@internal` users afterward — cleanup worked against live Neon, not just in tests. Real
+  gotcha hit getting there: `.env`'s `DATABASE_URL` has an unescaped `&`
+  (`...require&channel_binding=require`), which breaks a naive `source .env` over SSH (bash
+  treats `&` as backgrounding, `DATABASE_URL` ends up silently unset) — systemd's
+  `EnvironmentFile=` doesn't have this problem, only manual one-off invocations do; worked around
+  with a `while IFS='=' read` loop instead of `source`. **ERP-089**: 4 latency panels;
+  the interesting finding is that the retrieval sub-stage spans (ERP-028) have no matching
+  Prometheus histogram, so per-stage p50/p95 needed Tempo TraceQL metrics instead of PromQL
+  (confirmed supported on this plan, capped at a 25h query window). Also confirmed ingestion job
+  duration (upload → done, including any Cloud Run round-trip) is already visible via the
+  auto-instrumented `BackgroundTask run_ingestion_job` span. **ERP-090**: `GET /health`
+  (ERP-091) extended to also check Redis, covering both Neon and Upstash reachability from one
+  endpoint; Grafana Cloud Synthetic Monitoring required a one-time UI "Initialize plugin" step
+  (not API-automatable) and its own separate access token; 3 checks created (Mumbai probe) —
+  `vm-app-health`/`cloud-run-docling-health` every 5 min, `modal-ollama-health` every **60 min**
+  specifically to avoid a shorter interval inadvertently keeping Modal's scale-to-zero GPU
+  container always-warm (working against ERP-091's cost decision) — confirmed live at ~10.7s per
+  check (cheaper than a full generation cold start, since `/` doesn't load the model). Cloud Run
+  docling's check accepts both 200 and 403 as "up" (it's deliberately IAM-locked, ERP-047; an
+  external probe has no GCP identity token) — confirmed with the user as the preferred trade-off
+  over loosening Cloud Run's auth. AC's "verify a deliberately-broken check shows red" was
+  satisfied via a throwaway check (nonexistent hostname) rather than stopping a real service;
+  found and documented in the ticket that `probe_success=0` for a failing check can lag well
+  behind SM's own faster internal Reachability/Uptime display when propagating into the shared
+  `grafanacloud-prom` Prometheus datasource this dashboard queries — worth checking the SM
+  Checks page directly during a suspected live outage if the dashboard panel hasn't updated yet.
+  **The live VM was redeployed** (git pull + restart, user's explicit go-ahead) mid-session so
+  `/health` would actually exist in production before pointing a check at it — this also means
+  ERP-091's UX-mitigation code and ERP-095's job-sync fix reached production for the first time
+  in this same session. A real mid-session bug on ERP-087's first dashboard save: an em-dash in
+  panel titles got mangled into mojibake by a Windows Python encoding issue on script re-invoke —
+  caught by re-fetching and inspecting saved titles before calling it done; fixed with plain
+  hyphens and `PYTHONUTF8=1`/`PYTHONIOENCODING=utf-8`.
+- **ERP-091 Done (2026-09-25)**: decided UX mitigation over paid always-warm infra, confirmed
+  with the user using ERP-037/086's existing cold-start evidence rather than waiting on
+  ERP-089's (not-yet-built) latency panel — keeping Modal+Cloud+Neon always-warm would cost
+  ~$600-650/month combined against ADR-008's explicit free-tier/bounded-test scope. Shipped:
+  `GET /health` (`app/core/router.py`, new — unauthenticated, touches Postgres, doubles as an
+  ERP-090 uptime-check target and a login-page Neon pre-warm ping) and `POST /generation/warmup`
+  (pings Ollama's cheap `list()` endpoint via `OllamaLLMClient.ping()`, fired by the chat page on
+  mount). Frontend hints: `LoginPage.tsx` gained a real submitting state (there was none before)
+  plus a slow-hint after 2s; `ChatPage.tsx`'s typing indicator gains a cold-start hint after 5s
+  with zero tokens; `DocumentsPage.tsx` shows a hint for a job still "processing" past 20s, using
+  a new `startedAt` field on `RecentDocument` (`documentsStore.ts`) that survives repeated polls
+  unlike `lastUpdated`. `ChatPage.tsx` had zero test coverage before this ticket — added
+  `ChatPage.test.tsx` covering the new behavior only, not a full backfill. Verified: backend full
+  suite 553 passed, frontend full suite 84 passed, `tsc -b`/`oxlint`/`ruff`/`mypy --strict` clean.
+  **Not live-verified** against a real cold start on the live deployment. Merged to `develop` via
+  PR #62.
 - **ERP-092, ERP-093, ERP-094 all Done, built via `superpowers:subagent-driven-development`
   (2026-09-24)**: **ERP-092** — an intro/onboarding surface, both a one-time first-login modal
   (`IntroModal.tsx`, gated on `localStorage` + authenticated state) and a permanent `/about`

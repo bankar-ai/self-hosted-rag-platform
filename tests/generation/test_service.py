@@ -1,3 +1,5 @@
+import threading
+import time
 import uuid
 
 import pytest
@@ -6,6 +8,7 @@ from app.core.db import get_session_factory
 from app.generation.config import GenerationSettings
 from app.generation.repository import append_message, get_or_create_conversation, get_recent_messages
 from app.generation.service import (
+    FAILURE_NOTICE,
     GREETING_ANSWER,
     NO_CONTEXT_ANSWER,
     ConversationAccessDeniedError,
@@ -13,6 +16,7 @@ from app.generation.service import (
     generate_stream,
     get_conversation_history,
     list_conversations,
+    warmup_llm,
 )
 from app.retrieval.schemas import RetrievedChunk
 
@@ -69,6 +73,29 @@ class _FakeStreamingLLMClient:
     def generate_stream(self, system_prompt, user_prompt):
         self.stream_calls.append((system_prompt, user_prompt))
         yield from self._chunks
+
+
+def test_warmup_llm_pings_the_given_client():
+    class _FakePingClient:
+        def __init__(self):
+            self.ping_calls = 0
+
+        def ping(self):
+            self.ping_calls += 1
+
+    fake = _FakePingClient()
+    warmup_llm(fake)
+
+    assert fake.ping_calls == 1
+
+
+def test_warmup_llm_swallows_a_failed_ping():
+    class _FailingPingClient:
+        def ping(self):
+            raise RuntimeError("backend unreachable")
+
+    # Must not raise -- a failed warmup is silently absorbed, not surfaced to the caller.
+    warmup_llm(_FailingPingClient())
 
 
 def test_generate_short_circuits_on_empty_retrieval(monkeypatch):
@@ -589,6 +616,85 @@ def test_generate_stream_with_conversation_id_persists_after_done(monkeypatch):
     assert [m.content for m in messages] == ["what is X?", "the answer"]
 
 
+def test_generate_stream_persists_the_question_before_generation_starts(monkeypatch):
+    # ERP-096: the user's turn must exist in the database before the LLM is ever called --
+    # not bundled with the assistant's reply at the end -- so an interruption during
+    # generation can never erase the question itself.
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        session.commit()
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [_chunk("c1")])
+    question_persisted_before_first_token = threading.Event()
+
+    class _CheckingLLMClient:
+        def generate_stream(self, system_prompt, user_prompt):
+            with session_factory() as session:
+                messages = get_recent_messages(session, conversation_id, limit=10)
+            if len(messages) == 1 and messages[0].content == "what is X?":
+                question_persisted_before_first_token.set()
+            yield "the answer"
+
+    events = list(
+        generate_stream(
+            "what is X?",
+            top_k=5,
+            owner_id=_TEST_OWNER_ID,
+            conversation_id=conversation_id,
+            llm_client=_CheckingLLMClient(),
+        )
+    )
+
+    assert events[-1][0] == "done"
+    assert question_persisted_before_first_token.is_set()
+
+
+def test_generate_stream_disconnect_mid_stream_still_completes_and_persists(monkeypatch):
+    # ERP-096: abandoning the generator early (exactly what FastAPI does on a real client
+    # disconnect -- see StreamingResponse) must not stop generation or persistence. The
+    # background thread doing the real work is independent of whether anyone is still
+    # iterating `generate_stream`.
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        session.commit()
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [_chunk("c1")])
+    release_second_chunk = threading.Event()
+
+    class _SlowStreamingLLMClient:
+        def generate_stream(self, system_prompt, user_prompt):
+            yield "the "
+            release_second_chunk.wait(timeout=5)
+            yield "answer"
+
+    events = generate_stream(
+        "what is X?",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        conversation_id=conversation_id,
+        llm_client=_SlowStreamingLLMClient(),
+    )
+
+    assert next(events) == ("token", {"text": "the "})
+    events.close()  # simulates the ASGI layer abandoning the generator on client disconnect
+    release_second_chunk.set()
+
+    deadline = time.monotonic() + 5
+    messages = []
+    while time.monotonic() < deadline:
+        with session_factory() as session:
+            messages = get_recent_messages(session, conversation_id, limit=10)
+        if len(messages) == 2:
+            break
+        time.sleep(0.05)
+
+    assert [m.content for m in messages] == ["what is X?", "the answer"]
+
+
 def test_generate_stream_second_turn_rewrites_query_using_history(monkeypatch):
     conversation_id = uuid.uuid4()
     session_factory = get_session_factory()
@@ -627,7 +733,11 @@ def test_generate_stream_second_turn_rewrites_query_using_history(monkeypatch):
     assert events[-1][1]["conversation_id"] == str(conversation_id)
 
 
-def test_generate_stream_exception_mid_stream_yields_error_and_persists_nothing(monkeypatch):
+def test_generate_stream_exception_mid_stream_persists_question_and_a_failure_notice(monkeypatch):
+    # ERP-096: the user's question is persisted immediately, before generation even starts --
+    # so a later failure must never leave it looking like it was never asked. A neutral
+    # assistant-role failure notice is persisted too, so the conversation resolves instead of
+    # dangling on an unanswered question forever.
     conversation_id = uuid.uuid4()
     monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [_chunk("c1")])
 
@@ -655,7 +765,9 @@ def test_generate_stream_exception_mid_stream_yields_error_and_persists_nothing(
     session_factory = get_session_factory()
     with session_factory() as session:
         messages = get_recent_messages(session, conversation_id, limit=10)
-    assert messages == []
+    assert [m.role for m in messages] == ["user", "assistant"]
+    assert messages[0].content == "what is X?"
+    assert messages[1].content == FAILURE_NOTICE
 
 
 def test_list_conversations_returns_newest_first_with_preview():

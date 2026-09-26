@@ -89,6 +89,21 @@ def get_job(job_id: str) -> JobRecord | None:
         return _jobs.get(job_id)
 
 
+def list_active_jobs(owner_id: uuid.UUID) -> list[tuple[str, JobRecord]]:
+    """Return `owner_id`'s PENDING/PROCESSING/FAILED jobs as `(job_id, record)` pairs (ERP-095).
+
+    DONE jobs are excluded -- once ingestion finishes, the result lives on the document itself
+    (`GET /documents`), so there's nothing left for an "active jobs" view to show for it.
+    """
+    with _lock:
+        return [
+            (job_id, record)
+            for job_id, record in _jobs.items()
+            if record.owner_id == owner_id
+            and record.status in (JobStatus.PENDING, JobStatus.PROCESSING, JobStatus.FAILED)
+        ]
+
+
 def retry_job(job_id: str, owner_id: uuid.UUID) -> tuple[str, str, str] | None:
     """Create a fresh job re-running ingestion for `job_id`'s original uploaded file.
 
