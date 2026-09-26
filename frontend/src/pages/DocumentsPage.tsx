@@ -81,10 +81,18 @@ export default function DocumentsPage() {
   // -- not just this browser's own `localStorage` record -- so a job started on another device
   // (or a prior session on this one) still shows up here instead of only being visible to
   // whichever browser happened to initiate the upload.
+  //
+  // Also reconciles the other direction (ERP-099): a job seeded from this browser's own
+  // `localStorage` as "pending"/"processing" that the server no longer reports as active has
+  // reached a terminal state this device never observed (e.g. it finished, or was dismissed,
+  // while this tab wasn't open/polling) -- the server's active-jobs list is authoritative, so a
+  // locally-seeded job missing from it is treated as done, exactly like `pollJob`'s own "done"
+  // branch, rather than being left showing "processing" forever on just this device.
   async function hydrateActiveJobsFromServer(): Promise<void> {
     const response = await apiFetch("/ingestion/jobs");
     if (!response.ok) return;
     const body = (await response.json()) as JobListResponse;
+    const activeJobIds = new Set(body.jobs.map((job) => job.job_id));
     for (const job of body.jobs) {
       updateInProgress({
         id: job.job_id,
@@ -97,6 +105,17 @@ export default function DocumentsPage() {
         ensurePolling(job.job_id, job.filename);
       }
     }
+
+    const store = getDocumentsStore(scopedUserId);
+    const staleLocalJobs = store
+      .list()
+      .filter((doc) => (doc.status === "pending" || doc.status === "processing") && !activeJobIds.has(doc.id));
+    if (staleLocalJobs.length === 0) return;
+    for (const doc of staleLocalJobs) {
+      store.remove(doc.id);
+    }
+    setInProgress(store.list().filter((d) => d.status !== "done"));
+    await refreshServerDocuments();
   }
 
   useEffect(() => {
