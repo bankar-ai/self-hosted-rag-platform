@@ -5,15 +5,21 @@ from app.core.db import get_session_factory
 from app.evaluation.models import EvaluationRunRecord, GenerationEvaluationRunRecord
 from app.evaluation.repository import (
     cleanup_eval_data,
+    get_preceding_user_message,
+    get_unsampled_assistant_messages,
     save_evaluation_run,
     save_generation_evaluation_run,
+    save_production_sample_score,
 )
 from app.evaluation.schemas import (
     EvaluationSummary,
     GenerationEvaluationSummary,
     GenerationQueryResult,
+    ProductionSampleResult,
     QueryResult,
 )
+from app.generation.models import ConversationMessageRecord
+from app.generation.repository import append_message, get_or_create_conversation
 from app.ingestion.repository import get_chunks_by_vector_ids, save_document_and_chunks
 from app.ingestion.schemas import Chunk
 
@@ -121,3 +127,144 @@ def test_save_generation_evaluation_run_persists_summary_fields():
             GenerationEvaluationRunRecord.id == record_id
         ).delete()
         session.commit()
+
+
+def _build_conversation_turn(
+    session, owner_id: uuid.UUID, question: str = "what is X?", answer: str = "X is Y [1]"
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Create one conversation with a user turn followed by an assistant turn (ERP-097 fixtures).
+
+    Returns (conversation_id, user_message_id, assistant_message_id).
+    """
+    conversation_id = uuid.uuid4()
+    get_or_create_conversation(session, conversation_id, owner_id)
+    user_message = append_message(session, conversation_id, "user", question)
+    assistant_message = append_message(
+        session, conversation_id, "assistant", answer, citations=[{"chunk_id": "c1"}]
+    )
+    session.flush()
+    return conversation_id, user_message.id, assistant_message.id
+
+
+def test_get_unsampled_assistant_messages_excludes_already_scored():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = create_user(session, f"unsampled-{uuid.uuid4()}@test", "x")
+        session.flush()
+        _, _, unscored_id = _build_conversation_turn(session, user.id)
+        conv_b, _, already_scored_id = _build_conversation_turn(session, user.id)
+        save_production_sample_score(
+            session,
+            ProductionSampleResult(
+                message_id=already_scored_id,
+                conversation_id=conv_b,
+                query="what is X?",
+                judge="ollama",
+                faithfulness=0.9,
+                answer_relevancy=0.8,
+                context_precision=0.7,
+            ),
+        )
+        session.commit()
+
+        found_ids = {m.id for m in get_unsampled_assistant_messages(session, limit=50)}
+
+        assert unscored_id in found_ids
+        assert already_scored_id not in found_ids
+
+
+def test_get_unsampled_assistant_messages_excludes_user_role_messages():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = create_user(session, f"unsampled-userrole-{uuid.uuid4()}@test", "x")
+        session.flush()
+        _, user_message_id, _ = _build_conversation_turn(session, user.id)
+        session.commit()
+
+        found_ids = {m.id for m in get_unsampled_assistant_messages(session, limit=1000)}
+
+        assert user_message_id not in found_ids
+
+
+def test_get_preceding_user_message_returns_the_matching_question():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = create_user(session, f"preceding-{uuid.uuid4()}@test", "x")
+        session.flush()
+        _, user_message_id, assistant_message_id = _build_conversation_turn(
+            session, user.id, question="what is the answer to everything?"
+        )
+        session.commit()
+
+        assistant_message = session.get(ConversationMessageRecord, assistant_message_id)
+        preceding = get_preceding_user_message(session, assistant_message)
+
+        assert preceding is not None
+        assert preceding.id == user_message_id
+        assert preceding.content == "what is the answer to everything?"
+
+
+def test_get_preceding_user_message_returns_none_when_no_user_turn_precedes_it():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = create_user(session, f"preceding-none-{uuid.uuid4()}@test", "x")
+        session.flush()
+        conversation_id = uuid.uuid4()
+        get_or_create_conversation(session, conversation_id, user.id)
+        # An assistant message with no preceding user message at all (shouldn't happen via the
+        # real app, but the lookup must not crash if it somehow does).
+        orphan_assistant = append_message(session, conversation_id, "assistant", "orphan answer")
+        session.commit()
+
+        assert get_preceding_user_message(session, orphan_assistant) is None
+
+
+def test_save_production_sample_score_persists_scored_result():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = create_user(session, f"save-score-{uuid.uuid4()}@test", "x")
+        session.flush()
+        conversation_id, _, assistant_message_id = _build_conversation_turn(session, user.id)
+
+        record = save_production_sample_score(
+            session,
+            ProductionSampleResult(
+                message_id=assistant_message_id,
+                conversation_id=conversation_id,
+                query="what is X?",
+                judge="ollama",
+                faithfulness=0.9,
+                answer_relevancy=0.8,
+                context_precision=0.7,
+            ),
+        )
+        session.commit()
+
+        assert record.message_id == assistant_message_id
+        assert record.skipped is False
+        assert record.faithfulness == 0.9
+
+
+def test_save_production_sample_score_persists_a_skipped_result():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        user = create_user(session, f"save-score-skip-{uuid.uuid4()}@test", "x")
+        session.flush()
+        conversation_id, _, assistant_message_id = _build_conversation_turn(session, user.id)
+
+        record = save_production_sample_score(
+            session,
+            ProductionSampleResult(
+                message_id=assistant_message_id,
+                conversation_id=conversation_id,
+                query="what is X?",
+                judge="ollama",
+                skipped=True,
+                skip_reason="no resolvable context",
+            ),
+        )
+        session.commit()
+
+        assert record.skipped is True
+        assert record.skip_reason == "no resolvable context"
+        assert record.faithfulness is None

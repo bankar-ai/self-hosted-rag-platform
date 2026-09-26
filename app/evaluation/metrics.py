@@ -1,5 +1,20 @@
 """Pure retrieval-quality metrics: Precision@k, Recall@k, and reciprocal rank."""
 
+from collections.abc import Iterable
+
+
+def mean_excluding_none(scores: Iterable[float | None]) -> tuple[float, int]:
+    """Return (mean of the non-`None` scores, count of `None`s) -- `0.0`/`0` if `scores` is empty.
+
+    Shared by both generation-quality evaluation paths (the golden-dataset harness and ERP-097's
+    live-production sampler) -- a judge-unparseable score is `None`, not `0.0`, and must not drag
+    the mean toward 0 or be silently averaged in.
+    """
+    scores = list(scores)
+    present = [score for score in scores if score is not None]
+    failures = len(scores) - len(present)
+    return (sum(present) / len(present) if present else 0.0, failures)
+
 
 def precision_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
     """Fraction of the top-`k` retrieved IDs that are in `relevant`.
