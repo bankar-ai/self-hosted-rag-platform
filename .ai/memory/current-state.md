@@ -576,6 +576,31 @@ Living summary of what exists in this repository right now. Update in place as s
   `POST /generation/query` against the live deployment returned `200` with a correct, grounded,
   cited answer. `D:\github-projects\gcp-deployment-tracker.md`'s Modal row updated to record
   the spend-limit setting for future reference.
+- **`develop`→`main` promoted again and the VM switched to tracking `main` (2026-09-26, PR #65,
+  merge commit `31c44b0`)**: brings ERP-091, ERP-087, ERP-089, ERP-090, and ERP-096 to `main`.
+  While auditing this, discovered the VM's `~/app` checkout had tracked `develop` directly since
+  its original 2026-09-10 clone (not a deliberate choice, just never corrected) — switched it to
+  `main` (`git checkout main`, fast-forwarded 188 commits cleanly, the VM's local `main` ref
+  having been stale since the original clone). `gcp-deployment-tracker.md` updated: the deploy
+  workflow going forward is merge the promotion PR → SSH in → `git pull`/`uv sync`/restart, all
+  against `main` now, not `develop`. A `deploy_vm.bat` helper script was created then immediately
+  relocated to `C:\Users\Pankaj\scripts\` (never committed) after the user flagged that any
+  script embedding the live VM's name/IP/project ID must live outside this repo entirely, not
+  just gitignored.
+- **ERP-098 and ERP-099 Done (2026-09-26)**, found via live sanity-testing of the above
+  deployment and fixed the same session, in an isolated worktree (`erp-098-099-citation-job-
+  sync-fixes`) via TDD: **ERP-098** — inline `[n]` citation markers and the footer citation list
+  used two disagreeing numbering schemes (the LLM's original prompt-position number vs. the
+  backend's repacked cited-only array position), causing a real cited marker like `[3]` to
+  render unlinked while the footer showed a mismatched `[1]`. Fixed by adding a `Citation.marker`
+  field carrying the original number through end-to-end, resolved by value everywhere instead of
+  by array position. **ERP-099** — `DocumentsPage.tsx`'s ERP-095 hydration only ever added
+  server-active jobs to the locally-seeded list, never reconciled away a locally-seeded job the
+  server no longer considered active (e.g. it finished while this device wasn't polling) —
+  fixed by reconciling `inProgress` against the server's active-job set on every mount. Verified:
+  backend 558 passed (was 556), ruff/mypy clean; frontend 90 passed (was 86), `tsc -b`/`oxlint`
+  clean. Not yet merged/deployed as of this entry — see `.ai/sessions/2026-09-26-erp098-099-
+  citation-and-job-sync-fixes.md`.
 
 **Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to

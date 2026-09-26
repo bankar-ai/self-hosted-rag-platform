@@ -91,6 +91,7 @@ def test_query_returns_answer_with_citations(monkeypatch, auth_headers):
     assert body["answer"] == "the answer [1]"
     assert body["citations"] == [
         {
+            "marker": 1,
             "chunk_id": "c1",
             "document_id": "doc-1",
             "section_path": ["Intro"],
@@ -733,6 +734,7 @@ def test_query_stream_returns_citations_tokens_and_done(monkeypatch, auth_header
         {
             "citations": [
                 {
+                    "marker": 1,
                     "chunk_id": "c1",
                     "document_id": "doc-1",
                     "section_path": ["Intro"],

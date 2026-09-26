@@ -424,7 +424,23 @@ describe("DocumentsPage", () => {
       lastUpdated: Date.now(),
       startedAt: Date.now() - 25_000,
     });
-    stubAuthAndEmptyDocuments();
+    // The server must also report this job as still active (ERP-099 reconciliation removes a
+    // locally-seeded "processing" job the server no longer lists) -- a genuinely-stuck job is
+    // still active server-side too, unlike a stale/orphaned local entry.
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.endsWith("/ingestion/jobs")) {
+        return new Response(
+          JSON.stringify({
+            jobs: [{ job_id: "job-slow", filename: "scanned.pdf", status: "processing", error: null }],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/ingestion/jobs/job-slow")) {
+        return new Response(JSON.stringify({ status: "processing" }), { status: 200 });
+      }
+      return null;
+    });
 
     render(
       <AuthProvider>
@@ -444,7 +460,20 @@ describe("DocumentsPage", () => {
       lastUpdated: Date.now(),
       startedAt: Date.now() - 2_000,
     });
-    stubAuthAndEmptyDocuments();
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.endsWith("/ingestion/jobs")) {
+        return new Response(
+          JSON.stringify({
+            jobs: [{ job_id: "job-fast", filename: "quick.pdf", status: "processing", error: null }],
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/ingestion/jobs/job-fast")) {
+        return new Response(JSON.stringify({ status: "processing" }), { status: 200 });
+      }
+      return null;
+    });
 
     render(
       <AuthProvider>
@@ -454,6 +483,66 @@ describe("DocumentsPage", () => {
 
     expect(await screen.findByText("quick.pdf")).toBeInTheDocument();
     expect(screen.queryByText(/complex documents may need extra processing time/i)).not.toBeInTheDocument();
+  });
+
+  it("removes a locally-seeded job the server no longer reports as active (ERP-099)", async () => {
+    // Simulates a job that finished (or was removed) while this device wasn't polling it --
+    // e.g. it completed on another device, or this tab was closed mid-poll. The server's
+    // active-jobs list is authoritative and no longer includes it, so the stale local entry
+    // must be reconciled away instead of showing "processing" forever.
+    getDocumentsStore("u1").upsert({
+      id: "job-stale",
+      title: "stale.pdf",
+      status: "processing",
+      lastUpdated: Date.now(),
+      startedAt: Date.now() - 60_000,
+    });
+    stubAuthAndEmptyDocuments();
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    await waitFor(() => expect(screen.queryByText("stale.pdf")).not.toBeInTheDocument());
+  });
+
+  it("updates a locally-seeded job to failed when the server reports it as failed (ERP-099)", async () => {
+    getDocumentsStore("u1").upsert({
+      id: "job-now-failed",
+      title: "broken.pdf",
+      status: "processing",
+      lastUpdated: Date.now(),
+      startedAt: Date.now() - 60_000,
+    });
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.endsWith("/ingestion/jobs")) {
+        return new Response(
+          JSON.stringify({
+            jobs: [
+              {
+                job_id: "job-now-failed",
+                filename: "broken.pdf",
+                status: "failed",
+                error: "parse error",
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    await waitFor(() => expect(screen.getByText("broken.pdf")).toBeInTheDocument());
+    expect(screen.getByText("failed")).toBeInTheDocument();
   });
 
   it("shows a dismiss button on a failed upload-transfer entry that removes it from the list", async () => {

@@ -181,6 +181,33 @@ def test_generate_only_returns_citations_the_answer_actually_references(monkeypa
     assert response.citations[0].reranked is False
 
 
+def test_generate_citation_marker_matches_original_prompt_position(monkeypatch):
+    # ERP-098: citing only "[3]" out of 3 retrieved chunks returns exactly one citation, but its
+    # `marker` must stay 3 (the number the model actually wrote and the frontend must resolve),
+    # not silently renumbered to 1 just because it's the only entry in the returned list.
+    chunks = [_chunk("c1"), _chunk("c2"), _chunk("c3")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [3]")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    assert len(response.citations) == 1
+    assert response.citations[0].chunk_id == "c3"
+    assert response.citations[0].marker == 3
+
+
+def test_generate_citation_markers_preserved_for_non_prefix_cited_subset(monkeypatch):
+    # Citing [2] and [3] but not [1] must not shift markers down to 1 and 2.
+    chunks = [_chunk("c1"), _chunk("c2"), _chunk("c3")]
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
+    fake_llm = _FakeLLMClient("the answer [2][3]")
+
+    response = generate("what is X?", top_k=5, owner_id=_TEST_OWNER_ID, llm_client=fake_llm)
+
+    markers_by_chunk = {c.chunk_id: c.marker for c in response.citations}
+    assert markers_by_chunk == {"c2": 2, "c3": 3}
+
+
 def test_generate_returns_no_citations_when_answer_cites_nothing(monkeypatch):
     chunks = [_chunk("c1"), _chunk("c2")]
     monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: chunks)
@@ -508,6 +535,7 @@ def test_generate_stream_stateless_yields_tokens_then_citations_then_done(monkey
             {
                 "citations": [
                     {
+                        "marker": 1,
                         "chunk_id": "c1",
                         "document_id": "doc-1",
                         "section_path": ["Intro"],

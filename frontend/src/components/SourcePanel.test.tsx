@@ -5,6 +5,7 @@ import type { Citation } from "../lib/types";
 import SourcePanel from "./SourcePanel";
 
 const citation: Citation = {
+  marker: 1,
   chunk_id: "doc1-0",
   document_id: "doc1",
   section_path: ["Introduction"],

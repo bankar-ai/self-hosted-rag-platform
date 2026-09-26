@@ -5,6 +5,7 @@ from app.ingestion.models import ChunkRecord, DocumentRecord
 from app.ingestion.repository import (
     delete_document,
     get_chunk_by_document_and_owner,
+    get_chunks_by_ids,
     get_chunks_by_vector_ids,
     get_sibling_chunks,
     get_vector_ids_for_documents,
@@ -88,6 +89,45 @@ def test_get_chunks_by_vector_ids_ignores_unknown_ids():
     session_factory = get_session_factory()
     with session_factory() as session:
         assert get_chunks_by_vector_ids(session, [999_999_999], _TEST_OWNER_ID) == {}
+
+
+def test_get_chunks_by_ids_returns_rows_keyed_by_chunk_id():
+    document_id = "doc-by-id-test"
+    chunks = [_chunk(document_id, 0), _chunk(document_id, 1)]
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        save_document_and_chunks(session, document_id, "doc.pdf", chunks, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        found = get_chunks_by_ids(session, ["doc-by-id-test-0", "doc-by-id-test-1"])
+
+        assert set(found.keys()) == {"doc-by-id-test-0", "doc-by-id-test-1"}
+        assert found["doc-by-id-test-0"].text == "chunk text 0"
+
+
+def test_get_chunks_by_ids_empty_input_returns_empty_dict():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert get_chunks_by_ids(session, []) == {}
+
+
+def test_get_chunks_by_ids_tolerates_a_deleted_chunk_id():
+    document_id = "doc-partial-test"
+    chunks = [_chunk(document_id, 0)]
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        save_document_and_chunks(session, document_id, "doc.pdf", chunks, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        found = get_chunks_by_ids(session, ["doc-partial-test-0", "does-not-exist"])
+
+        assert set(found.keys()) == {"doc-partial-test-0"}
 
 
 def test_search_chunks_by_text_ranks_matching_chunk_first():

@@ -568,7 +568,7 @@ export default function ChatPage() {
                   )}
                   {message.citations && message.citations.length > 0 && (
                     <ul className="mt-2 flex flex-col gap-0.5 border-t border-slate-200 pt-2 text-xs text-slate-500">
-                      {message.citations.map((citation, citationIndex) => (
+                      {message.citations.map((citation) => (
                         <li key={citation.chunk_id}>
                           <button
                             type="button"
@@ -578,7 +578,7 @@ export default function ChatPage() {
                               openSourcePanel(citation);
                             }}
                           >
-                            [{citationIndex + 1}] {formatCitation(citation)}
+                            [{citation.marker}] {formatCitation(citation)}
                           </button>
                         </li>
                       ))}
