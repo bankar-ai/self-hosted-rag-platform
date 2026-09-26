@@ -2,11 +2,17 @@
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserRecord
-from app.evaluation.models import EvaluationRunRecord, GenerationEvaluationRunRecord
-from app.evaluation.schemas import EvaluationSummary, GenerationEvaluationSummary
+from app.evaluation.models import (
+    EvaluationRunRecord,
+    GenerationEvaluationRunRecord,
+    ProductionSampleScoreRecord,
+)
+from app.evaluation.schemas import EvaluationSummary, GenerationEvaluationSummary, ProductionSampleResult
+from app.generation.models import ConversationMessageRecord
 from app.ingestion.models import ChunkRecord, DocumentRecord
 
 
@@ -53,3 +59,65 @@ def cleanup_eval_data(session: Session, document_ids: list[str], owner_id: uuid.
     for document_id in document_ids:
         session.query(DocumentRecord).filter(DocumentRecord.document_id == document_id).delete()
     session.query(UserRecord).filter(UserRecord.id == owner_id).delete()
+
+
+def get_unsampled_assistant_messages(session: Session, limit: int) -> list[ConversationMessageRecord]:
+    """Assistant messages with no `ProductionSampleScoreRecord` yet, oldest first (ERP-097).
+
+    A message already scored by a prior sampling run (successfully or as a skip) is excluded,
+    so repeated invocations never re-score the same message.
+    """
+    already_sampled = select(ProductionSampleScoreRecord.message_id)
+    return list(
+        session.scalars(
+            select(ConversationMessageRecord)
+            .where(
+                ConversationMessageRecord.role == "assistant",
+                ConversationMessageRecord.id.not_in(already_sampled),
+            )
+            .order_by(ConversationMessageRecord.sequence)
+            .limit(limit)
+        )
+    )
+
+
+def get_preceding_user_message(
+    session: Session, assistant_message: ConversationMessageRecord
+) -> ConversationMessageRecord | None:
+    """Return the `"user"` message immediately before `assistant_message` -- its question (ERP-097).
+
+    `sequence` is a single `Identity` shared across *all* conversations, not per-conversation, so
+    this filters by `conversation_id` explicitly rather than assuming `sequence - 1`. `None` if
+    no such message exists (shouldn't happen via the real app, which always persists a user turn
+    before its assistant reply, but this must not crash if it somehow does).
+    """
+    return session.scalars(
+        select(ConversationMessageRecord)
+        .where(
+            ConversationMessageRecord.conversation_id == assistant_message.conversation_id,
+            ConversationMessageRecord.sequence < assistant_message.sequence,
+            ConversationMessageRecord.role == "user",
+        )
+        .order_by(ConversationMessageRecord.sequence.desc())
+        .limit(1)
+    ).first()
+
+
+def save_production_sample_score(
+    session: Session, result: ProductionSampleResult
+) -> ProductionSampleScoreRecord:
+    """Persist `result` as a new `ProductionSampleScoreRecord`. Does not commit."""
+    record = ProductionSampleScoreRecord(
+        message_id=result.message_id,
+        conversation_id=result.conversation_id,
+        judge=result.judge,
+        query=result.query,
+        skipped=result.skipped,
+        skip_reason=result.skip_reason,
+        faithfulness=result.faithfulness,
+        answer_relevancy=result.answer_relevancy,
+        context_precision=result.context_precision,
+    )
+    session.add(record)
+    session.flush()
+    return record

@@ -9,7 +9,6 @@ import os
 import shutil
 import tempfile
 import uuid
-from collections.abc import Iterable
 
 from app.auth.repository import create_user
 from app.core.db import get_session_factory
@@ -19,6 +18,7 @@ from app.embedding.index import OwnerFaissIndexStore
 from app.embedding.service import embed_and_persist
 from app.evaluation.dataset import GOLDEN_DOCUMENTS, GOLDEN_QUERIES
 from app.evaluation.judges import GenerationJudge, RagasJudge
+from app.evaluation.metrics import mean_excluding_none
 from app.evaluation.repository import cleanup_eval_data, save_generation_evaluation_run
 from app.evaluation.schemas import GenerationEvaluationSummary, GenerationQueryResult
 from app.generation.client import LLMClient, OllamaLLMClient
@@ -26,14 +26,6 @@ from app.generation.config import get_generation_settings
 from app.generation.prompt import SYSTEM_PROMPT, build_prompt
 from app.ingestion.schemas import Chunk
 from app.retrieval.service import search
-
-
-def _mean_and_failures(scores: Iterable[float | None]) -> tuple[float, int]:
-    """Return (mean of the non-`None` scores, count of `None`s) -- `0.0`/`0` if `scores` is empty."""
-    scores = list(scores)
-    present = [score for score in scores if score is not None]
-    failures = len(scores) - len(present)
-    return (sum(present) / len(present) if present else 0.0, failures)
 
 
 def run_generation_evaluation(
@@ -121,9 +113,9 @@ def run_generation_evaluation(
             )
         )
 
-    faithfulness_mean, faithfulness_failures = _mean_and_failures(r.faithfulness for r in per_query)
-    relevancy_mean, relevancy_failures = _mean_and_failures(r.answer_relevancy for r in per_query)
-    precision_mean, precision_failures = _mean_and_failures(r.context_precision for r in per_query)
+    faithfulness_mean, faithfulness_failures = mean_excluding_none(r.faithfulness for r in per_query)
+    relevancy_mean, relevancy_failures = mean_excluding_none(r.answer_relevancy for r in per_query)
+    precision_mean, precision_failures = mean_excluding_none(r.context_precision for r in per_query)
 
     summary = GenerationEvaluationSummary(
         judge=type(judge).__name__,

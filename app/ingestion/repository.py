@@ -100,6 +100,18 @@ def get_chunks_by_vector_ids(
     return {row.vector_id: row for row in rows}
 
 
+def get_chunks_by_ids(session: Session, chunk_ids: list[str]) -> dict[str, ChunkRecord]:
+    """Fetch chunk rows by their string `chunk_id`s, not owner-scoped.
+
+    Keyed by `chunk_id`; a `chunk_id` with no matching row (e.g. its document was since
+    deleted) is simply absent from the result, not an error. `{}` for empty input.
+    """
+    if not chunk_ids:
+        return {}
+    rows = session.scalars(select(ChunkRecord).where(ChunkRecord.chunk_id.in_(chunk_ids))).all()
+    return {row.chunk_id: row for row in rows}
+
+
 def search_chunks_by_text(
     session: Session,
     query_text: str,

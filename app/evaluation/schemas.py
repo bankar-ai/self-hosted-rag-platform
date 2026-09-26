@@ -1,5 +1,7 @@
 """Pydantic schemas for one evaluation run's per-query results and aggregate summary."""
 
+import uuid
+
 from pydantic import BaseModel
 
 
@@ -64,3 +66,34 @@ class GenerationEvaluationSummary(BaseModel):
     answer_relevancy_parse_failures: int = 0
     context_precision_parse_failures: int = 0
     per_query: list[GenerationQueryResult]
+
+
+class ProductionSampleResult(BaseModel):
+    """One live production assistant message's scored (or skipped) sampling result (ERP-097).
+
+    `skipped=True` means no retrieved context could be resolved for this message (every cited
+    chunk/document has since been deleted, or it had no citations at all) -- all three score
+    fields are `None` in that case, and `skip_reason` explains why.
+    """
+
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    query: str
+    judge: str
+    skipped: bool = False
+    skip_reason: str | None = None
+    faithfulness: float | None = None
+    answer_relevancy: float | None = None
+    context_precision: float | None = None
+
+
+class ProductionSamplingSummary(BaseModel):
+    """Aggregate result of one production-sampling run (ERP-097)."""
+
+    judge: str
+    num_candidates: int
+    num_scored: int
+    num_skipped: int
+    mean_faithfulness: float
+    mean_answer_relevancy: float
+    mean_context_precision: float
