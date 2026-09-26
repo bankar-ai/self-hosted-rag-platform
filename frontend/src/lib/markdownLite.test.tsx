@@ -54,6 +54,7 @@ describe("renderMarkdownLite", () => {
 
   it("renders a [n] marker as a clickable element when it matches a citation", async () => {
     const citation: Citation = {
+      marker: 1,
       chunk_id: "c1",
       document_id: "d1",
       section_path: ["Intro"],
@@ -79,8 +80,34 @@ describe("renderMarkdownLite", () => {
     expect(marker.tagName).not.toBe("BUTTON");
   });
 
+  it("resolves a [n] marker by its citation's `marker` field, not its array position (ERP-098)", async () => {
+    // Only chunk 3 (of an original 3) was ever cited, so the backend returns a single-element
+    // citations array -- but that element's `marker` is still 3, not 1. Indexing the array by
+    // the literal marker number ("[3]" -> citations[2]) must fail to resolve; only matching on
+    // `marker` should find it.
+    const citation: Citation = {
+      marker: 3,
+      chunk_id: "c3",
+      document_id: "d1",
+      section_path: ["Intro"],
+      page_start: 1,
+      page_end: 1,
+      source_filename: "doc.pdf",
+      score: 1,
+      reranked: false,
+    };
+    const onCitationClick = vi.fn();
+    render(<div>{renderMarkdownLite("Details: [3].", [citation], onCitationClick)}</div>);
+
+    const marker = screen.getByText("[3]");
+    expect(marker.tagName).toBe("BUTTON");
+    await userEvent.click(marker);
+    expect(onCitationClick).toHaveBeenCalledWith(citation);
+  });
+
   it("renders a model-bundled [1, 2, 4] marker as separate clickable markers, not one inert block", async () => {
     const citations: Citation[] = [1, 2, 3, 4].map((n) => ({
+      marker: n,
       chunk_id: `c${n}`,
       document_id: "d1",
       section_path: [],
@@ -109,6 +136,7 @@ describe("renderMarkdownLite", () => {
 
   it("renders a [n] marker inside bold text as clickable too (ERP-077)", async () => {
     const citation: Citation = {
+      marker: 1,
       chunk_id: "c1",
       document_id: "d1",
       section_path: ["Intro"],

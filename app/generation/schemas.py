@@ -46,6 +46,17 @@ class Citation(BaseModel):
     a chunk merely present in the LLM's context window but never cited is not (ERP-055).
     """
 
+    marker: int = Field(
+        default=0,
+        description=(
+            "The original [n] number from the numbered prompt context that the answer text "
+            "cites this chunk with (ERP-098) -- NOT this citation's position in this list, "
+            "which is repacked to include only cited chunks and is therefore not stable "
+            "across a non-contiguous or out-of-order cited subset. The frontend must resolve "
+            "an inline `[n]` marker by matching this field, never by array index. Defaults to "
+            "0 (never a valid marker) for citations persisted before this field existed."
+        ),
+    )
     chunk_id: str
     document_id: str
     section_path: list[str]

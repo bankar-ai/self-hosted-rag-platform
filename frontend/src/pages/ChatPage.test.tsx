@@ -139,6 +139,35 @@ describe("ChatPage", () => {
     expect(screen.queryByText(/waking up the model/i)).not.toBeInTheDocument();
   });
 
+  it("footer citation list displays the citation's own marker, not its array position (ERP-098)", async () => {
+    // Only chunk 3 (of an original 3) was cited, so the citations event carries a single
+    // element whose `marker` is 3 -- the footer must show "[3]", matching the inline marker
+    // in the answer text, not "[1]" (its position in this 1-element array).
+    stubChatFetch(() =>
+      sseResponse([
+        'event: token\ndata: {"text": "answer [3]"}\n\n',
+        'event: citations\ndata: {"citations": [{"marker": 3, "chunk_id": "c3", "document_id": "d1", "section_path": [], "page_start": 1, "page_end": 1, "source_filename": "doc.pdf", "score": 0.9, "reranked": false}]}\n\n',
+        "event: done\ndata: {}\n\n",
+      ])
+    );
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    const input = await screen.findByPlaceholderText(/ask a question/i);
+    await userEvent.type(input, "What does the doc say?");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    // The footer entry's text is "[n] doc.pdf, p. 1" -- distinct from the inline marker
+    // button (whose text is just "[3]" with no filename), so this specifically targets the
+    // footer citation list's own numbering, not the inline marker already covered above.
+    expect(await screen.findByText("[3] doc.pdf, p. 1")).toBeInTheDocument();
+    expect(screen.queryByText("[1] doc.pdf, p. 1")).not.toBeInTheDocument();
+  });
+
   describe("ERP-096: recovering an answer this browser never saw arrive live", () => {
     const CONVERSATION_ID = "c1";
 

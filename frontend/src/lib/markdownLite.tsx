@@ -35,7 +35,10 @@ function renderTextWithCitations(
     return (
       <span key={`${keyPrefix}-${index}`}>
         {numbers.map((number, numberIndex) => {
-          const citation = citations[Number(number) - 1];
+          // ERP-098: `citations` only contains chunks the answer actually cited, repacked --
+          // its array position has no relationship to the model's original [n] marker number,
+          // so a marker must be matched by `citation.marker`, never by array index.
+          const citation = citations.find((c) => c.marker === Number(number));
           if (!citation) {
             return <span key={numberIndex}>{`[${number}]`}</span>;
           }

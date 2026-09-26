@@ -12,6 +12,11 @@ export interface UserResponse {
 }
 
 export interface Citation {
+  /** The original [n] number this citation was cited with (ERP-098) -- match inline markers
+   * against this field, never against this citation's position in a `Citation[]` array, since
+   * that array only contains cited chunks and is not stable across a non-contiguous/out-of-
+   * order cited subset. */
+  marker: number;
   chunk_id: string;
   document_id: string;
   section_path: string[];

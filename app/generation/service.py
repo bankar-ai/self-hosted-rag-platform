@@ -79,28 +79,33 @@ class ConversationTitleConflictError(Exception):
 _CITATION_MARKER_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
 
 
-def _cited_chunks(answer: str, included_chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
-    """Return only the `included_chunks` the answer actually cites with a `[n]` marker.
+def _cited_chunks(answer: str, included_chunks: list[RetrievedChunk]) -> list[tuple[int, RetrievedChunk]]:
+    """Return the (original marker, chunk) pairs for `included_chunks` the answer actually cites.
 
     `included_chunks` is 1-indexed by prompt position (`build_prompt`'s `[1]`, `[2]`, ...);
     a marker number with no corresponding chunk (a hallucinated citation) is silently
     ignored, matching the existing tolerance for LLM output that doesn't perfectly follow
     instructions. Preserves `included_chunks`' original order (ERP-055) -- a chunk the model
     never referenced is not returned, even though it was present in its context window.
+
+    The original 1-indexed marker is carried alongside each chunk (ERP-098) rather than
+    discarded, since the caller must not re-derive a citation's marker from its position in
+    this (possibly non-contiguous, subset-of-prompt) return list.
     """
     cited_indices: set[int] = set()
     for match in _CITATION_MARKER_RE.findall(answer):
         cited_indices.update(int(piece) for piece in match.split(","))
     return [
-        chunk
+        (index, chunk)
         for index, chunk in enumerate(included_chunks, start=1)
         if index in cited_indices
     ]
 
 
-def _citations_for(chunks: list[RetrievedChunk], reranked: bool) -> list[Citation]:
+def _citations_for(cited: list[tuple[int, RetrievedChunk]], reranked: bool) -> list[Citation]:
     return [
         Citation(
+            marker=marker,
             chunk_id=chunk.chunk_id,
             document_id=chunk.document_id,
             section_path=chunk.section_path,
@@ -110,7 +115,7 @@ def _citations_for(chunks: list[RetrievedChunk], reranked: bool) -> list[Citatio
             score=chunk.score,
             reranked=reranked,
         )
-        for chunk in chunks
+        for marker, chunk in cited
     ]
 
 
