@@ -92,6 +92,14 @@ def run_production_sampling(
                 session.commit()
                 continue
 
+            source_documents = sorted(
+                {
+                    chunks_by_id[chunk_id].source_filename
+                    for chunk_id in citation_chunk_ids
+                    if chunk_id in chunks_by_id
+                }
+            )
+
             scores = judge.score(preceding.content, message.content, contexts)
             result = ProductionSampleResult(
                 message_id=message.id,
@@ -101,6 +109,7 @@ def run_production_sampling(
                 faithfulness=scores.faithfulness,
                 answer_relevancy=scores.answer_relevancy,
                 context_precision=scores.context_precision,
+                source_documents=source_documents,
             )
             results.append(result)
             save_production_sample_score(session, result)

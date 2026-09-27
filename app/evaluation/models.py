@@ -71,3 +71,6 @@ class ProductionSampleScoreRecord(Base):
     faithfulness: Mapped[float | None] = mapped_column(default=None)
     answer_relevancy: Mapped[float | None] = mapped_column(default=None)
     context_precision: Mapped[float | None] = mapped_column(default=None)
+    # ERP-104: deduplicated source filenames the resolved citations came from -- lets a low
+    # score be diagnosed (e.g. wrong document retrieved) without a manual join.
+    source_documents: Mapped[list[str] | None] = mapped_column(JSON, default=None)

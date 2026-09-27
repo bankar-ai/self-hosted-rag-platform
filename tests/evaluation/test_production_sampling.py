@@ -55,6 +55,16 @@ def test_run_production_sampling_scores_a_message_with_resolvable_citations():
     assert summary.num_candidates == 1
     assert summary.num_scored == 1
     assert summary.num_skipped == 0
+
+    with session_factory() as session:
+        from app.evaluation.models import ProductionSampleScoreRecord
+
+        record = (
+            session.query(ProductionSampleScoreRecord)
+            .filter(ProductionSampleScoreRecord.query == "what is the capital of France?")
+            .one()
+        )
+        assert record.source_documents == ["doc.pdf"]
     assert summary.mean_faithfulness == 0.9
 
 
