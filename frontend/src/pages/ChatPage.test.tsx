@@ -234,18 +234,102 @@ describe("ChatPage", () => {
 
     const box1 = await screen.findByRole("checkbox", { name: /one\.pdf/i });
     const box2 = screen.getByRole("checkbox", { name: /two\.pdf/i });
+    const selectAll = screen.getByRole("checkbox", {
+      name: /select all documents/i,
+    }) as HTMLInputElement;
     expect(box1).toBeChecked();
     expect(box2).toBeChecked();
+    expect(selectAll).toBeChecked();
+    expect(selectAll.indeterminate).toBe(false);
 
-    await userEvent.click(screen.getByRole("button", { name: "Deselect all" }));
+    // Partial selection: the master checkbox goes indeterminate, and clicking it while
+    // indeterminate moves to "select all" (standard checkbox convention), not "deselect all".
+    await userEvent.click(box1);
+    expect(selectAll.indeterminate).toBe(true);
+
+    await userEvent.click(selectAll);
+    expect(box1).toBeChecked();
+    expect(box2).toBeChecked();
+    expect(selectAll).toBeChecked();
+    expect(selectAll.indeterminate).toBe(false);
+
+    await userEvent.click(selectAll);
     expect(box1).not.toBeChecked();
     expect(box2).not.toBeChecked();
+    expect(selectAll).not.toBeChecked();
     expect(screen.getByText(/no documents selected/i)).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Select all" }));
+    await userEvent.click(selectAll);
     expect(box1).toBeChecked();
     expect(box2).toBeChecked();
+    expect(selectAll).toBeChecked();
     expect(screen.queryByText(/no documents selected/i)).not.toBeInTheDocument();
+  });
+
+  it("deletes a conversation after confirmation, and starts a new chat if it was the active one", async () => {
+    stubChatFetch(
+      () => sseResponse(["event: done\ndata: {}\n\n"]),
+      (url) => {
+        if ((url.includes("/conversations?") || url.endsWith("/conversations"))) {
+          return new Response(
+            JSON.stringify({
+              conversations: [
+                { conversation_id: "c1", title: "First chat", preview: null },
+                { conversation_id: "c2", title: "Second chat", preview: null },
+              ],
+              has_more: false,
+            }),
+            { status: 200 }
+          );
+        }
+        return undefined;
+      }
+    );
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    await screen.findByText("First chat");
+    const deleteButtons = screen.getAllByTitle("Delete conversation");
+    await userEvent.click(deleteButtons[0]);
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("First chat"));
+    expect(screen.queryByText("First chat")).not.toBeInTheDocument();
+    expect(screen.getByText("Second chat")).toBeInTheDocument();
+  });
+
+  it("does not delete a conversation if the confirmation is declined", async () => {
+    stubChatFetch(
+      () => sseResponse(["event: done\ndata: {}\n\n"]),
+      (url) => {
+        if ((url.includes("/conversations?") || url.endsWith("/conversations"))) {
+          return new Response(
+            JSON.stringify({
+              conversations: [{ conversation_id: "c1", title: "First chat", preview: null }],
+              has_more: false,
+            }),
+            { status: 200 }
+          );
+        }
+        return undefined;
+      }
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    await screen.findByText("First chat");
+    await userEvent.click(screen.getByTitle("Delete conversation"));
+
+    expect(screen.getByText("First chat")).toBeInTheDocument();
   });
 
   it("shows a jump-to-latest control once scrolled away from the bottom, and it scrolls back (ERP-102)", async () => {

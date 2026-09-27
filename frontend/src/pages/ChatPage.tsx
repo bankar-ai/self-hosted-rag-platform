@@ -407,6 +407,25 @@ export default function ChatPage() {
     void renameConversation(conv.id, title.trim());
   }
 
+  async function deleteConversation(id: string): Promise<void> {
+    const response = await apiFetch(`/conversations/${id}`, { method: "DELETE" });
+    if (!response.ok) return;
+    setRecentConversations((prev) => prev.filter((c) => c.id !== id));
+    // Deleting the conversation currently open leaves nothing to show -- start a fresh one
+    // rather than leaving the chat pane pointed at an id the server no longer knows about.
+    if (id === conversationId) {
+      startNewConversation();
+    }
+  }
+
+  function handleDelete(conv: SidebarConversation): void {
+    const confirmed = window.confirm(
+      `This will permanently delete "${conv.title}" and its full history. This cannot be undone. Continue?`
+    );
+    if (!confirmed) return;
+    void deleteConversation(conv.id);
+  }
+
   async function setMessageFeedback(messageId: string, rating: "up" | "down"): Promise<void> {
     const isRemovingRating = messages.find((m) => m.id === messageId)?.feedback === rating;
     const response = await apiFetch(`/conversations/messages/${messageId}/feedback`, {
@@ -521,6 +540,7 @@ export default function ChatPage() {
         activeConversationId={conversationId}
         onSelectConversation={(id) => void selectConversation(id)}
         onRenameConversation={handleRename}
+        onDeleteConversation={handleDelete}
         onCopyTranscript={copyConversationTranscript}
         onNewConversation={startNewConversation}
         hasMoreConversations={hasMoreConversations}

@@ -552,6 +552,93 @@ def test_rename_conversation_404_for_another_users_conversation(monkeypatch):
     assert response.status_code == 404
 
 
+def test_delete_conversation_returns_204_and_removes_it(monkeypatch, auth_headers):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    conversation_id = str(uuid.uuid4())
+    client.post(
+        "/generation/query",
+        json={"query": "first question", "conversation_id": conversation_id},
+        headers=auth_headers,
+    )
+
+    response = client.delete(f"/conversations/{conversation_id}", headers=auth_headers)
+    assert response.status_code == 204
+
+    listed = client.get("/conversations", headers=auth_headers)
+    assert all(c["conversation_id"] != conversation_id for c in listed.json()["conversations"])
+
+    history = client.get(f"/conversations/{conversation_id}", headers=auth_headers)
+    assert history.status_code == 404
+
+
+def test_delete_conversation_404_for_unknown_id(auth_headers):
+    import uuid
+
+    response = client.delete(f"/conversations/{uuid.uuid4()}", headers=auth_headers)
+    assert response.status_code == 404
+
+
+def test_delete_conversation_404_for_another_users_conversation(monkeypatch):
+    import uuid
+
+    from app.retrieval.schemas import RetrievedChunk
+
+    chunk = RetrievedChunk(
+        chunk_id="c1",
+        document_id="doc-1",
+        text="some text",
+        section_path=["Intro"],
+        page_start=1,
+        page_end=1,
+        source_filename="doc.pdf",
+        score=0.9,
+    )
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [chunk])
+
+    from app.generation.client import OllamaLLMClient
+
+    monkeypatch.setattr(
+        OllamaLLMClient, "generate", lambda self, system_prompt, user_prompt: "the answer"
+    )
+
+    headers_a = register_and_login(client, "generation-delete-owner-a")
+    headers_b = register_and_login(client, "generation-delete-owner-b")
+    conversation_id = str(uuid.uuid4())
+    client.post(
+        "/generation/query",
+        json={"query": "a's question", "conversation_id": conversation_id},
+        headers=headers_a,
+    )
+
+    response = client.delete(f"/conversations/{conversation_id}", headers=headers_b)
+    assert response.status_code == 404
+
+    # Confirm it wasn't actually deleted -- owner a can still see it.
+    listed = client.get("/conversations", headers=headers_a)
+    assert any(c["conversation_id"] == conversation_id for c in listed.json()["conversations"])
+
+
 def test_rename_conversation_rejects_empty_title(auth_headers):
     import uuid
 

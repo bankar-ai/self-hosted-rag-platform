@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import ConfidenceBadge from "./ConfidenceBadge";
 import CopyButton from "./CopyButton";
@@ -18,6 +19,7 @@ interface SidebarProps {
   activeConversationId: string;
   onSelectConversation: (id: string) => void;
   onRenameConversation: (conv: SidebarConversation) => void;
+  onDeleteConversation: (conv: SidebarConversation) => void;
   /** Fetches and formats one conversation's transcript on demand (ERP-075) -- the sidebar only
    * ever holds an id/title, so copying a row that isn't the currently-open conversation needs
    * a fetch, unlike the open chat's own "Copy conversation" action. */
@@ -45,6 +47,7 @@ export default function Sidebar({
   activeConversationId,
   onSelectConversation,
   onRenameConversation,
+  onDeleteConversation,
   onCopyTranscript,
   onNewConversation,
   hasMoreConversations,
@@ -57,6 +60,21 @@ export default function Sidebar({
   isOpenOnMobile,
   onCloseMobile,
 }: SidebarProps) {
+  // ERP-101 redesign: a single master checkbox instead of two separate "Select all"/"Deselect
+  // all" text links -- checked when every document is selected, unchecked when none are, and
+  // indeterminate (a dash, not a check) when it's a mix, so the control's own visual state
+  // always honestly reflects the underlying selection instead of just being two one-way buttons.
+  // `indeterminate` has no JSX prop -- it's a DOM-only property, so it's set imperatively here.
+  const allSelected = documents.length > 0 && deselectedDocumentIds.size === 0;
+  const noneSelected = documents.length > 0 && deselectedDocumentIds.size === documents.length;
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allSelected && !noneSelected;
+    }
+  }, [allSelected, noneSelected]);
+
   return (
     <>
       {isOpenOnMobile && (
@@ -121,6 +139,13 @@ export default function Sidebar({
                 title="Copy conversation"
                 className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
               />
+              <button
+                className="shrink-0 rounded-md px-1.5 py-1 text-xs text-slate-400 hover:bg-red-100 hover:text-red-600"
+                title="Delete conversation"
+                onClick={() => onDeleteConversation(conv)}
+              >
+                🗑
+              </button>
             </li>
           ))}
         </ul>
@@ -140,22 +165,17 @@ export default function Sidebar({
           Your documents
         </p>
         {documents.length > 1 && (
-          <div className="flex gap-2 text-xs text-slate-400">
-            <button
-              type="button"
-              className="hover:text-slate-700 hover:underline"
-              onClick={() => onSetAllDocumentsSelected(true)}
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              className="hover:text-slate-700 hover:underline"
-              onClick={() => onSetAllDocumentsSelected(false)}
-            >
-              Deselect all
-            </button>
-          </div>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-brand"
+              checked={allSelected}
+              onChange={() => onSetAllDocumentsSelected(!allSelected)}
+              aria-label="Select all documents"
+            />
+            Select all
+          </label>
         )}
       </div>
       {documents.length === 0 ? (
