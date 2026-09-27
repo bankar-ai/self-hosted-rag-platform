@@ -4,7 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.auth.dependencies import get_current_user
 from app.auth.schemas import CurrentUser
@@ -148,9 +148,13 @@ def delete_job_endpoint(job_id: str, current_user: CurrentUser = Depends(get_cur
 
 
 @documents_router.get("")
-def list_documents_endpoint(current_user: CurrentUser = Depends(get_current_user)) -> DocumentListResponse:
-    """Return the caller's successfully ingested documents, newest first."""
-    return list_documents(current_user.id)
+def list_documents_endpoint(
+    current_user: CurrentUser = Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> DocumentListResponse:
+    """Return one page of the caller's successfully ingested documents, newest first (ERP-103)."""
+    return list_documents(current_user.id, limit=limit, offset=offset)
 
 
 @documents_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

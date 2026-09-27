@@ -53,13 +53,22 @@ def save_document_and_chunks(
     return records
 
 
-def list_documents_for_owner(session: Session, owner_id: uuid.UUID) -> list[DocumentRecord]:
-    """Return `owner_id`'s successfully ingested documents, newest first."""
+def list_documents_for_owner(
+    session: Session, owner_id: uuid.UUID, limit: int = 1000, offset: int = 0
+) -> list[DocumentRecord]:
+    """Return up to `limit` of `owner_id`'s successfully ingested documents, newest first, from `offset`.
+
+    `limit` is passed through as-is (the caller, `service.list_documents`, requests `limit + 1`
+    to detect whether a further page exists without a separate `COUNT` query, ERP-103) -- this
+    function has no opinion on that, it just runs the bounded query.
+    """
     return list(
         session.scalars(
             select(DocumentRecord)
             .where(DocumentRecord.owner_id == owner_id)
             .order_by(DocumentRecord.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
     )
 

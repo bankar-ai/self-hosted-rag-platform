@@ -81,11 +81,13 @@ def append_message(
     role: str,
     content: str,
     citations: list[dict[str, Any]] | None = None,
+    retrieval_settings: dict[str, Any] | None = None,
 ) -> ConversationMessageRecord:
     """Append one message to `conversation_id`. Does not commit.
 
-    `citations` (ERP-080) is only ever set for an assistant turn -- a "user"-role message
-    has nothing to cite, so callers simply omit it (defaulting to `None`).
+    `citations` (ERP-080) and `retrieval_settings` (ERP-107) are only ever set for an
+    assistant turn -- a "user"-role message has nothing to cite and used no retrieval
+    settings of its own, so callers simply omit both (defaulting to `None`).
     """
     message = ConversationMessageRecord(
         id=uuid.uuid4(),
@@ -93,6 +95,7 @@ def append_message(
         role=role,
         content=content,
         citations=citations,
+        retrieval_settings=retrieval_settings,
     )
     session.add(message)
     session.flush()
@@ -141,13 +144,22 @@ def get_all_messages(session: Session, conversation_id: uuid.UUID) -> list[Conve
     )
 
 
-def list_conversations_for_owner(session: Session, owner_id: uuid.UUID) -> list[ConversationRecord]:
-    """Return `owner_id`'s conversations, newest first."""
+def list_conversations_for_owner(
+    session: Session, owner_id: uuid.UUID, limit: int = 1000, offset: int = 0
+) -> list[ConversationRecord]:
+    """Return up to `limit` of `owner_id`'s conversations, newest first, starting at `offset`.
+
+    `limit` is passed through as-is (the caller, `service.list_conversations`, requests
+    `limit + 1` to detect whether a further page exists without a separate `COUNT` query,
+    ERP-103) -- this function has no opinion on that, it just runs the bounded query.
+    """
     return list(
         session.scalars(
             select(ConversationRecord)
             .where(ConversationRecord.owner_id == owner_id)
             .order_by(ConversationRecord.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         ).all()
     )
 

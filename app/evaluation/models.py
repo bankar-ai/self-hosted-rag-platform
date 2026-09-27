@@ -74,3 +74,9 @@ class ProductionSampleScoreRecord(Base):
     # ERP-104: deduplicated source filenames the resolved citations came from -- lets a low
     # score be diagnosed (e.g. wrong document retrieved) without a manual join.
     source_documents: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    # ERP-107: the retrieval settings the sampled message's generation call actually used
+    # (copied straight from `ConversationMessageRecord.retrieval_settings`) -- lets a low score
+    # be diagnosed against e.g. an unscoped multi-document retrieval picking the wrong PDF
+    # (the exact ERP-097 finding that motivated this ticket). `None` for a message persisted
+    # before ERP-107's column existed, same convention as `source_documents`.
+    retrieval_settings: Mapped[dict[str, object] | None] = mapped_column(JSON, default=None)

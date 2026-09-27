@@ -68,6 +68,47 @@ def test_run_production_sampling_scores_a_message_with_resolvable_citations():
     assert summary.mean_faithfulness == 0.9
 
 
+def test_run_production_sampling_surfaces_the_sampled_messages_retrieval_settings():
+    """ERP-107: retrieval_settings copied from the message, not recomputed or defaulted."""
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        owner = create_user(session, f"prod-sample-{uuid.uuid4()}@test", "x")
+        session.flush()
+        document_id = str(uuid.uuid4())
+        chunk_id = f"{document_id}-0"
+        chunk = _make_chunk(document_id, chunk_id, "Paris is the capital.")
+        save_document_and_chunks(session, document_id, "doc.pdf", [chunk], owner.id)
+        conversation_id = uuid.uuid4()
+        get_or_create_conversation(session, conversation_id, owner.id)
+        query_text = f"what is the capital of France? ({uuid.uuid4()})"
+        append_message(session, conversation_id, "user", query_text)
+        append_message(
+            session,
+            conversation_id,
+            "assistant",
+            "Paris [1]",
+            citations=[{"chunk_id": chunk_id, "marker": 1}],
+            retrieval_settings={"rerank": True, "expand_sections": False, "document_ids": [document_id]},
+        )
+        session.commit()
+
+    run_production_sampling(judge=_FixedFakeJudge(), limit=50, session_factory=session_factory)
+
+    with session_factory() as session:
+        from app.evaluation.models import ProductionSampleScoreRecord
+
+        record = (
+            session.query(ProductionSampleScoreRecord)
+            .filter(ProductionSampleScoreRecord.query == query_text)
+            .one()
+        )
+        assert record.retrieval_settings == {
+            "rerank": True,
+            "expand_sections": False,
+            "document_ids": [document_id],
+        }
+
+
 def test_run_production_sampling_skips_a_message_with_only_deleted_citations():
     session_factory = get_session_factory()
     with session_factory() as session:

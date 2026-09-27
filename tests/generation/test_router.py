@@ -3,6 +3,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.rate_limit import RateLimiter
 from app.main import app
 from tests.auth_helpers import register_and_login
 
@@ -31,6 +32,20 @@ def test_query_returns_no_context_answer_when_retrieval_empty(auth_headers):
     body = response.json()
     assert body["citations"] == []
     assert "don't have enough information" in body["answer"]
+
+
+def test_query_past_the_rate_limit_returns_429_with_retry_after(
+    auth_headers, monkeypatch, rate_limit_settings
+):
+    limited_settings = rate_limit_settings.model_copy(update={"requests_per_minute": 1})
+    monkeypatch.setattr(
+        "app.auth.dependencies.get_default_rate_limiter", lambda: RateLimiter(limited_settings)
+    )
+    first = client.post("/generation/query", json={"query": "anything"}, headers=auth_headers)
+    assert first.status_code == 200
+    second = client.post("/generation/query", json={"query": "anything"}, headers=auth_headers)
+    assert second.status_code == 429
+    assert "Retry-After" in second.headers
 
 
 def test_warmup_returns_204_even_when_the_llm_backend_is_unreachable(auth_headers):
@@ -367,7 +382,7 @@ def test_list_conversations_empty_for_new_user(auth_headers):
     response = client.get("/conversations", headers=auth_headers)
 
     assert response.status_code == 200
-    assert response.json() == {"conversations": []}
+    assert response.json() == {"conversations": [], "has_more": False}
 
 
 def test_list_conversations_returns_newest_first_with_preview(monkeypatch):
@@ -447,7 +462,7 @@ def test_list_conversations_does_not_include_another_users_conversations(monkeyp
     response = client.get("/conversations", headers=headers_b)
 
     assert response.status_code == 200
-    assert response.json() == {"conversations": []}
+    assert response.json() == {"conversations": [], "has_more": False}
 
 
 def test_rename_conversation_returns_204_and_persists(monkeypatch, auth_headers):

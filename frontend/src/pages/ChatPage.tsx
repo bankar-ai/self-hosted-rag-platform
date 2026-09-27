@@ -33,6 +33,20 @@ function newConversationId(): string {
 
 const ACTIVE_CONVERSATION_KEY_PREFIX = "rag-active-conversation:";
 
+// ERP-103: page size for GET /conversations -- matches the backend default.
+const CONVERSATIONS_PAGE_SIZE = 50;
+
+function toSidebarConversation(conversation: {
+  conversation_id: string;
+  title: string | null;
+  preview: string | null;
+}): SidebarConversation {
+  return {
+    id: conversation.conversation_id,
+    title: conversation.title ?? (conversation.preview ? conversation.preview.slice(0, 60) : "New conversation"),
+  };
+}
+
 /** Reads/writes are best-effort -- a private-browsing/storage-blocked browser just falls back
  * to always starting a new conversation, same as before this feature existed (ERP-060). */
 function getStoredConversationId(userId: string): string | null {
@@ -146,6 +160,9 @@ export default function ChatPage() {
   // leaving the user staring at a plain animation for up to a minute.
   const [showColdStartHint, setShowColdStartHint] = useState(false);
   const [recentConversations, setRecentConversations] = useState<SidebarConversation[]>([]);
+  // ERP-103: whether a further page of conversations exists beyond what's currently loaded.
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [isLoadingMoreConversations, setIsLoadingMoreConversations] = useState(false);
   const [documents, setDocuments] = useState<SidebarDocument[]>([]);
   // ERP-044: opt-out model -- a document is included in every query's scope unless the user
   // has explicitly unchecked it, so newly-uploaded documents are selected by default without
@@ -197,19 +214,28 @@ export default function ChatPage() {
   useEffect(() => {
     if (!userId) return;
     void (async () => {
-      const response = await apiFetch("/conversations");
+      const response = await apiFetch(`/conversations?limit=${CONVERSATIONS_PAGE_SIZE}&offset=0`);
       if (!response.ok) return;
       const body = (await response.json()) as ConversationListResponse;
-      setRecentConversations(
-        body.conversations.map((conversation) => ({
-          id: conversation.conversation_id,
-          title:
-            conversation.title ??
-            (conversation.preview ? conversation.preview.slice(0, 60) : "New conversation"),
-        }))
-      );
+      setRecentConversations(body.conversations.map(toSidebarConversation));
+      setHasMoreConversations(body.has_more);
     })();
   }, [userId]);
+
+  async function loadMoreConversations(): Promise<void> {
+    setIsLoadingMoreConversations(true);
+    try {
+      const response = await apiFetch(
+        `/conversations?limit=${CONVERSATIONS_PAGE_SIZE}&offset=${recentConversations.length}`
+      );
+      if (!response.ok) return;
+      const body = (await response.json()) as ConversationListResponse;
+      setRecentConversations((prev) => [...prev, ...body.conversations.map(toSidebarConversation)]);
+      setHasMoreConversations(body.has_more);
+    } finally {
+      setIsLoadingMoreConversations(false);
+    }
+  }
 
   // Restores the conversation that was open before a refresh (ERP-060) -- without this, every
   // page load silently started a brand new blank chat regardless of what was open before,
@@ -497,6 +523,9 @@ export default function ChatPage() {
         onRenameConversation={handleRename}
         onCopyTranscript={copyConversationTranscript}
         onNewConversation={startNewConversation}
+        hasMoreConversations={hasMoreConversations}
+        isLoadingMoreConversations={isLoadingMoreConversations}
+        onLoadMoreConversations={() => void loadMoreConversations()}
         documents={documents}
         deselectedDocumentIds={deselectedDocumentIds}
         onToggleDocument={toggleDocumentSelected}

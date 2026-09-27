@@ -82,6 +82,7 @@ export interface DocumentSummary {
 
 export interface DocumentListResponse {
   documents: DocumentSummary[];
+  has_more: boolean;
 }
 
 export interface ChunkDetail {
@@ -103,6 +104,7 @@ export interface ConversationSummary {
 
 export interface ConversationListResponse {
   conversations: ConversationSummary[];
+  has_more: boolean;
 }
 
 export interface ConversationMessage {
@@ -112,6 +114,10 @@ export interface ConversationMessage {
   created_at: string;
   feedback: "up" | "down" | null;
   citations: Citation[];
+  /** The rerank/expand_sections/document_ids this assistant turn's generation call actually
+   * used (ERP-107) -- `null` for a user-role message or one persisted before this field
+   * existed. Not currently rendered anywhere in the UI. */
+  retrieval_settings: Record<string, unknown> | null;
 }
 
 export interface ConversationHistoryResponse {

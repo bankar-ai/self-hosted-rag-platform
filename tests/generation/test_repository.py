@@ -234,6 +234,29 @@ def test_list_conversations_for_owner_excludes_other_owners():
         assert list_conversations_for_owner(session, owner_id) == []
 
 
+def test_list_conversations_for_owner_respects_limit_and_offset():
+    owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    conv_ids = [uuid.uuid4() for _ in range(3)]
+    for conv_id in conv_ids:
+        with session_factory() as session:
+            get_or_create_conversation(session, conv_id, owner_id)
+            session.commit()
+
+    with session_factory() as session:
+        first_page = list_conversations_for_owner(session, owner_id, limit=2, offset=0)
+        second_page = list_conversations_for_owner(session, owner_id, limit=2, offset=2)
+
+    assert [c.id for c in first_page] == list(reversed(conv_ids))[:2]
+    assert [c.id for c in second_page] == [conv_ids[0]]
+
+
 def test_get_first_user_messages_returns_earliest_user_message_per_conversation():
     conversation_id = uuid.uuid4()
     session_factory = get_session_factory()

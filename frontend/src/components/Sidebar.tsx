@@ -23,6 +23,10 @@ interface SidebarProps {
    * a fetch, unlike the open chat's own "Copy conversation" action. */
   onCopyTranscript: (id: string) => Promise<string>;
   onNewConversation: () => void;
+  /** ERP-103: whether a further page of conversations exists beyond `recentConversations`. */
+  hasMoreConversations: boolean;
+  isLoadingMoreConversations: boolean;
+  onLoadMoreConversations: () => void;
   documents: SidebarDocument[];
   deselectedDocumentIds: Set<string>;
   onToggleDocument: (id: string) => void;
@@ -43,6 +47,9 @@ export default function Sidebar({
   onRenameConversation,
   onCopyTranscript,
   onNewConversation,
+  hasMoreConversations,
+  isLoadingMoreConversations,
+  onLoadMoreConversations,
   documents,
   deselectedDocumentIds,
   onToggleDocument,
@@ -117,6 +124,16 @@ export default function Sidebar({
             </li>
           ))}
         </ul>
+      )}
+      {hasMoreConversations && (
+        <button
+          type="button"
+          className="mb-6 -mt-4 px-1 text-left text-xs text-slate-400 hover:text-slate-700 hover:underline disabled:opacity-50"
+          onClick={onLoadMoreConversations}
+          disabled={isLoadingMoreConversations}
+        >
+          {isLoadingMoreConversations ? "Loading..." : "Load more"}
+        </button>
       )}
       <div className="mb-2 flex items-center justify-between px-1">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
