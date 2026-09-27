@@ -26,6 +26,8 @@ interface SidebarProps {
   documents: SidebarDocument[];
   deselectedDocumentIds: Set<string>;
   onToggleDocument: (id: string) => void;
+  /** ERP-101: bulk select/deselect every document at once. */
+  onSetAllDocumentsSelected: (selected: boolean) => void;
   /** ERP-078: below the `md` breakpoint the sidebar becomes a slide-in overlay instead of a
    * static column, since a fixed 64/80/rest three-column layout doesn't fit a narrow viewport. */
   isOpenOnMobile: boolean;
@@ -44,6 +46,7 @@ export default function Sidebar({
   documents,
   deselectedDocumentIds,
   onToggleDocument,
+  onSetAllDocumentsSelected,
   isOpenOnMobile,
   onCloseMobile,
 }: SidebarProps) {
@@ -115,9 +118,29 @@ export default function Sidebar({
           ))}
         </ul>
       )}
-      <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-        Your documents
-      </p>
+      <div className="mb-2 flex items-center justify-between px-1">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          Your documents
+        </p>
+        {documents.length > 1 && (
+          <div className="flex gap-2 text-xs text-slate-400">
+            <button
+              type="button"
+              className="hover:text-slate-700 hover:underline"
+              onClick={() => onSetAllDocumentsSelected(true)}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="hover:text-slate-700 hover:underline"
+              onClick={() => onSetAllDocumentsSelected(false)}
+            >
+              Deselect all
+            </button>
+          </div>
+        )}
+      </div>
       {documents.length === 0 ? (
         <p className="px-1 text-sm text-slate-400">
           No documents uploaded yet — visit Documents to add one.

@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Iterator
 
 from app.core.db import get_session_factory
-from app.generation.client import LLMClient, OllamaLLMClient
+from app.generation.client import LLMClient, get_default_llm_client
 from app.generation.config import GenerationSettings, get_generation_settings
 from app.generation.prompt import SYSTEM_PROMPT, build_prompt
 from app.generation.repository import (
@@ -119,14 +119,14 @@ def _citations_for(cited: list[tuple[int, RetrievedChunk]], reranked: bool) -> l
     ]
 
 
-def warmup_llm(llm_client: OllamaLLMClient | None = None) -> None:
+def warmup_llm(llm_client: LLMClient | None = None) -> None:
     """Best-effort ping to wake a scale-to-zero LLM backend before a real request needs it.
 
     (ERP-091). Never raises -- a failed/slow warmup just means the first real request pays the
     full cold-start cost, exactly as it would have without this call, so a caller can fire this
     and ignore the outcome entirely.
     """
-    llm_client = llm_client or OllamaLLMClient(get_generation_settings())
+    llm_client = llm_client or get_default_llm_client(get_generation_settings())
     try:
         llm_client.ping()
     except Exception:
@@ -172,7 +172,7 @@ def generate(
     reflects that the question went unanswered).
 
     `settings`/`llm_client` are injectable for testing; default to the process-wide
-    cached `GenerationSettings` and an `OllamaLLMClient` built from it.
+    cached `GenerationSettings` and the configured `LLMClient` built from it (ERP-106).
     """
     settings = settings or get_generation_settings()
 
@@ -186,7 +186,7 @@ def generate(
         if not chunks:
             return GenerationResponse(answer=NO_CONTEXT_ANSWER, citations=[], conversation_id=None)
 
-        llm_client = llm_client or OllamaLLMClient(settings)
+        llm_client = llm_client or get_default_llm_client(settings)
         user_prompt, included_chunks = build_prompt(query, chunks, settings.max_context_chars)
         answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
         citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
@@ -208,7 +208,7 @@ def generate(
         citations = []
     else:
         if history:
-            llm_client = llm_client or OllamaLLMClient(settings)
+            llm_client = llm_client or get_default_llm_client(settings)
             rewritten_query = rewrite_query(query, history, llm_client)
         else:
             rewritten_query = query
@@ -225,7 +225,7 @@ def generate(
             answer = NO_CONTEXT_ANSWER
             citations = []
         else:
-            llm_client = llm_client or OllamaLLMClient(settings)
+            llm_client = llm_client or get_default_llm_client(settings)
             user_prompt, included_chunks = build_prompt(
                 query, chunks, settings.max_context_chars, history=history
             )
@@ -304,7 +304,7 @@ def generate_stream(
                 yield "done", {"conversation_id": None}
                 return
 
-            llm_client = llm_client or OllamaLLMClient(settings)
+            llm_client = llm_client or get_default_llm_client(settings)
             user_prompt, included_chunks = build_prompt(query, chunks, settings.max_context_chars)
             answer_parts: list[str] = []
             for piece in llm_client.generate_stream(SYSTEM_PROMPT, user_prompt):
@@ -408,7 +408,7 @@ def _run_stateful_generation(
             answer = GREETING_ANSWER
         else:
             if history:
-                llm_client = llm_client or OllamaLLMClient(settings)
+                llm_client = llm_client or get_default_llm_client(settings)
                 rewritten_query = rewrite_query(query, history, llm_client)
             else:
                 rewritten_query = query
@@ -426,7 +426,7 @@ def _run_stateful_generation(
                 event_queue.put(("citations", {"citations": []}))
                 answer = NO_CONTEXT_ANSWER
             else:
-                llm_client = llm_client or OllamaLLMClient(settings)
+                llm_client = llm_client or get_default_llm_client(settings)
                 user_prompt, included_chunks = build_prompt(
                     query, chunks, settings.max_context_chars, history=history
                 )

@@ -599,8 +599,51 @@ Living summary of what exists in this repository right now. Update in place as s
   server no longer considered active (e.g. it finished while this device wasn't polling) —
   fixed by reconciling `inProgress` against the server's active-job set on every mount. Verified:
   backend 558 passed (was 556), ruff/mypy clean; frontend 90 passed (was 86), `tsc -b`/`oxlint`
-  clean. Not yet merged/deployed as of this entry — see `.ai/sessions/2026-09-26-erp098-099-
-  citation-and-job-sync-fixes.md`.
+  clean. Merged to `develop` via PR #66, then promoted to `main` via PR #68 (2026-09-26) and
+  deployed live. See `.ai/sessions/2026-09-26-erp098-099-citation-and-job-sync-fixes.md`.
+- **ERP-097 Done (2026-09-26)**: an out-of-band production-sampling harness
+  (`app/evaluation/production_sampling.py`'s `run_production_sampling`, invoked via
+  `uv run python -m app.evaluation.production_sample_run [--judge ragas|ollama] [--limit N]`)
+  scores real `conversation_messages` assistant turns against the existing `GenerationJudge`
+  interface, reusing `generation_runner.py`'s scoring plumbing rather than duplicating it —
+  deliberately never touches the live chat request path. Every not-yet-sampled message is
+  scored (not a probabilistic sample, given current low traffic); a message with no resolvable
+  retrieved context (no citations, or every cited chunk/document since deleted, e.g. via
+  ERP-040's admin delete) is recorded as `skipped`, never scored, and never retried. New
+  `production_sample_scores` table (migration `6412377c47e5`); new Grafana dashboard row
+  ("Production Sampling - Live Traffic"), pushed via the Grafana HTTP API and re-synced to
+  `deploy/grafana/dashboards/ai-platforms-service-observability.json`. Verified: backend 572
+  passed (was 558), ruff/mypy clean. Merged to `develop` via PR #67, promoted to `main` via PR
+  #68 (2026-09-26). **Live-verified with real data**: migration applied to live Neon, code
+  deployed, `production_sample_run` swept all 75 real assistant messages that existed
+  (`--limit 15` then `--limit 60`) — 9 scored, 66 skipped (mostly pre-existing throwaway
+  test-account messages with since-deleted documents). Real production scores: Faithfulness
+  0.950, Answer Relevancy 0.789, Context Precision 0.933. **Deploy gotcha discovered**: a
+  non-interactive `gcloud compute ssh --command=...` invocation doesn't source `~/app/.env` the
+  way systemd does, and PowerShell/`gcloud.cmd`'s own quoting mangled attempts to inline the
+  existing `.env`-parsing workaround directly on the command line — resolved by writing the
+  command to a local script file and `gcloud compute scp`-ing it to the VM instead of passing it
+  inline. **Real-world finding from the live run**: scoring 9 messages took roughly an hour —
+  confirmed via `ps aux` the process was alive and blocked on network I/O (not hung), matching
+  the same-day latency investigation's finding that gemma3:4b generation calls via Modal can
+  take 80-250+ seconds even when not a full cold start; `OllamaLLMClient.generate` has no
+  request timeout configured at all. Session log:
+  `.ai/sessions/2026-09-26-erp097-production-sampling.md`.
+- **Live chat latency diagnosed as infrastructure, not the model (2026-09-26, no ticket yet)**:
+  pulled real Grafana Cloud trace/metric data (read-only, via the Prometheus and Tempo data
+  sources) for that day's 7 real chat requests. `llm_generation_duration_seconds` is bimodal —
+  3 of 7 calls finished in ≤5s (genuinely fast once warm), 2 of 7 took 75-250s (clear Modal cold
+  starts, worse than the "up to a minute" the UI currently promises). Critically, **embedding
+  cold-starts too** — `nomic-embed-text` shares the same lazily-spun-up Modal container as
+  `gemma3:4b`, and one trace showed embedding alone taking 139.8s. This means swapping only
+  generation to a hosted API (e.g. Claude Haiku 4.5, confirmed real pricing ~$1/$5 per million
+  tokens) would shrink but not eliminate the "waking up" delay — embeddings would need to move
+  too, which is a bigger decision (re-embedding the whole FAISS index against a different
+  model). Also confirmed via live web research: neither Claude Pro nor ChatGPT Go includes API
+  access — both are billed completely separately from any API/Console usage, so the user's
+  existing subscriptions can't be repurposed to power this app's backend calls regardless of
+  which provider is chosen. No ticket opened yet; the user has a specific idea in mind not yet
+  detailed, to be picked up in a later session.
 
 **Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
