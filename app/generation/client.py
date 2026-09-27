@@ -1,9 +1,11 @@
-"""Answer generation via a local Ollama chat model."""
+"""Answer generation via a local Ollama chat model, or a hosted OpenRouter model (ERP-106)."""
 
+import json
 import logging
 import time
 from typing import Iterator, Protocol
 
+import httpx
 import ollama
 
 from app.core.telemetry import get_meter, get_tracer
@@ -25,6 +27,10 @@ class LLMClient(Protocol):
 
     def generate_stream(self, system_prompt: str, user_prompt: str) -> Iterator[str]:
         """Yield the model's answer text in chunks, in order, for the given prompts."""
+        ...
+
+    def ping(self) -> None:
+        """Best-effort warmup touch (ERP-091/ERP-106); a no-op for a provider with no cold start."""
         ...
 
 
@@ -87,3 +93,94 @@ class OllamaLLMClient:
             content = chunk.message.content
             if content:
                 yield content
+
+
+class OpenRouterLLMClient:
+    """`LLMClient` backed by OpenRouter's OpenAI-compatible hosted inference API (ERP-106).
+
+    Unlike `OllamaLLMClient` (a self-hosted, Modal-backed model that scales to zero when idle),
+    OpenRouter routes to always-on shared infrastructure -- there is no cold start to hide, so
+    `ping()` is a documented no-op rather than a real warmup.
+    """
+
+    def __init__(self, settings: GenerationSettings) -> None:
+        """Build a client bound to `settings.openrouter_*`. Raises if no API key is configured."""
+        if not settings.openrouter_api_key:
+            raise ValueError(
+                "GENERATION_OPENROUTER_API_KEY is required when GENERATION_PROVIDER=openrouter"
+            )
+        self._client = httpx.Client(
+            base_url=settings.openrouter_base_url,
+            headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            timeout=httpx.Timeout(60.0),
+        )
+        self._model = settings.openrouter_model
+        self._temperature = settings.temperature
+        logger.info("Generation LLM client configured for OpenRouter model=%r", self._model)
+
+    def _messages(self, system_prompt: str, user_prompt: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+    def generate(self, system_prompt: str, user_prompt: str) -> str:
+        """Send `system_prompt`/`user_prompt` to OpenRouter and return the response text."""
+        with get_tracer().start_as_current_span("llm.generate") as span:
+            span.set_attribute("llm.model", self._model)
+            start = time.monotonic()
+            response = self._client.post(
+                "/chat/completions",
+                json={
+                    "model": self._model,
+                    "messages": self._messages(system_prompt, user_prompt),
+                    "temperature": self._temperature,
+                },
+            )
+            response.raise_for_status()
+            _duration_histogram.record(time.monotonic() - start, {"model": self._model})
+            body = response.json()
+            return body["choices"][0]["message"]["content"] or ""
+
+    def ping(self) -> None:
+        """No-op -- OpenRouter has no scale-to-zero cold start to hide (ERP-106)."""
+
+    def generate_stream(self, system_prompt: str, user_prompt: str) -> Iterator[str]:
+        """Stream `system_prompt`/`user_prompt` to OpenRouter, yielding text chunks in order.
+
+        Parses the standard OpenAI-compatible SSE shape (`data: {...}` lines, terminated by a
+        literal `data: [DONE]`) -- no extra dependency needed, `httpx`'s own line iteration is
+        enough for this simple a format.
+        """
+        with self._client.stream(
+            "POST",
+            "/chat/completions",
+            json={
+                "model": self._model,
+                "messages": self._messages(system_prompt, user_prompt),
+                "temperature": self._temperature,
+                "stream": True,
+            },
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[len("data: ") :]
+                if data == "[DONE]":
+                    break
+                delta = json.loads(data)["choices"][0]["delta"].get("content")
+                if delta:
+                    yield delta
+
+
+def get_default_llm_client(settings: GenerationSettings) -> "LLMClient":
+    """Build the `LLMClient` configured by `settings.provider` (ERP-106).
+
+    The single place that decides Ollama vs. OpenRouter -- every call site that previously
+    default-constructed `OllamaLLMClient(settings)` directly goes through this instead, so
+    switching providers is a one-place config change, not a find-and-replace.
+    """
+    if settings.provider == "openrouter":
+        return OpenRouterLLMClient(settings)
+    return OllamaLLMClient(settings)
