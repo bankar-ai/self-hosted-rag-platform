@@ -155,6 +155,8 @@ export default function ChatPage() {
   // ERP-078: the sidebar collapses into a toggleable overlay below the `md` breakpoint.
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // ERP-102: whether the user has scrolled up away from the latest message.
+  const [isAwayFromBottom, setIsAwayFromBottom] = useState(false);
   // ERP-079: remembers whichever citation marker/list-item was clicked to open the source
   // panel, so closing it (Escape, the close button, or picking another citation) can return
   // focus there instead of dropping it silently.
@@ -180,6 +182,13 @@ export default function ChatPage() {
       }
       return next;
     });
+  }
+
+  // ERP-101: bulk select/deselect, reusing the same deselectedDocumentIds state the opt-out
+  // model already relies on -- "select all" just clears it, "deselect all" fills it with every
+  // known document id.
+  function setAllDocumentsSelected(selected: boolean): void {
+    setDeselectedDocumentIds(selected ? new Set() : new Set(documents.map((doc) => doc.id)));
   }
 
   // Both lists are hydrated from the backend (not localStorage) so chat history and the
@@ -491,6 +500,7 @@ export default function ChatPage() {
         documents={documents}
         deselectedDocumentIds={deselectedDocumentIds}
         onToggleDocument={toggleDocumentSelected}
+        onSetAllDocumentsSelected={setAllDocumentsSelected}
         isOpenOnMobile={isSidebarOpen}
         onCloseMobile={() => setIsSidebarOpen(false)}
       />
@@ -505,7 +515,16 @@ export default function ChatPage() {
             ☰ Menu
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="relative flex-1 overflow-hidden">
+        <div
+          className="h-full overflow-y-auto px-6 py-4"
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            // ERP-102: "near the bottom" tolerance, not an exact match -- sub-pixel scroll
+            // rounding means scrollHeight - scrollTop - clientHeight is rarely exactly 0.
+            setIsAwayFromBottom(el.scrollHeight - el.scrollTop - el.clientHeight > 80);
+          }}
+        >
           {messages.length === 0 && (
             <p className="mt-12 text-center text-sm text-slate-400">
               Ask a question about one of your uploaded documents to get started.
@@ -554,14 +573,8 @@ export default function ChatPage() {
                   {message.role === "user" && (
                     <div className="mt-1 flex justify-end">
                       <CopyButton
-                        getText={() => {
-                          const next = messages[index + 1];
-                          return buildTurnText(
-                            message.content,
-                            next?.role === "assistant" ? next.content : undefined
-                          );
-                        }}
-                        label="Copy Q&A"
+                        getText={() => message.content}
+                        label="Copy"
                         className="rounded px-1.5 py-0.5 text-xs text-white/70 hover:bg-white/10 hover:text-white"
                       />
                     </div>
@@ -587,8 +600,14 @@ export default function ChatPage() {
                   {message.role === "assistant" && !isPendingAssistant && message.content && (
                     <div className="mt-2 flex items-center gap-1 border-t border-slate-200 pt-2">
                       <CopyButton
-                        getText={() => message.content}
-                        label="Copy"
+                        getText={() => {
+                          const previous = messages[index - 1];
+                          return buildTurnText(
+                            previous?.role === "user" ? previous.content : "",
+                            message.content
+                          );
+                        }}
+                        label="Copy Q&A"
                         className="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-200"
                       />
                       {message.id && (
@@ -624,6 +643,16 @@ export default function ChatPage() {
             })}
             <div ref={bottomRef} />
           </div>
+        </div>
+        {isAwayFromBottom && (
+          <button
+            type="button"
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-white shadow-lg hover:bg-slate-700"
+            onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })}
+          >
+            ↓ Jump to latest
+          </button>
+        )}
         </div>
         <div className="border-t border-slate-200 p-4">
           <div className="mx-auto flex max-w-2xl gap-2">
