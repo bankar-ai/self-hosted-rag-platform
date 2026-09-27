@@ -117,6 +117,7 @@ def save_production_sample_score(
         faithfulness=result.faithfulness,
         answer_relevancy=result.answer_relevancy,
         context_precision=result.context_precision,
+        source_documents=result.source_documents,
     )
     session.add(record)
     session.flush()

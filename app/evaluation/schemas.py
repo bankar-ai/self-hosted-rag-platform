@@ -2,7 +2,7 @@
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class QueryResult(BaseModel):
@@ -85,6 +85,14 @@ class ProductionSampleResult(BaseModel):
     faithfulness: float | None = None
     answer_relevancy: float | None = None
     context_precision: float | None = None
+    source_documents: list[str] | None = Field(
+        default=None,
+        description=(
+            "Deduplicated source filenames the resolved citations came from (ERP-104) -- "
+            "`None` when nothing resolved (skipped). Lets a low score be diagnosed (e.g. wrong "
+            "document retrieved) without a manual join."
+        ),
+    )
 
 
 class ProductionSamplingSummary(BaseModel):
