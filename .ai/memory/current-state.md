@@ -644,6 +644,33 @@ Living summary of what exists in this repository right now. Update in place as s
   existing subscriptions can't be repurposed to power this app's backend calls regardless of
   which provider is chosen. No ticket opened yet; the user has a specific idea in mind not yet
   detailed, to be picked up in a later session.
+- **ERP-100/101/102/104/105 Done, ERP-106 In Progress (2026-09-27)**: a prioritized batch
+  session following the 2026-09-26 investigation. **ERP-106**: `GenerationSettings.provider`
+  switch (`"ollama"` default unchanged; `"openrouter"` new) with a new `OpenRouterLLMClient`
+  (OpenAI-compatible via `httpx`, no new dependency) and a `get_default_llm_client` factory
+  centralizing all 7 previous `OllamaLLMClient(settings)` call sites in
+  `app/generation/service.py`. Deployed live and switched on in `~/app/.env`, but **blocked on
+  the user's OpenRouter payment settling** (confirmed via OpenRouter's own API —
+  `total_credits: 0` despite a $5 purchase, a pending autopay debit dated 2026-09-28) — the
+  `$100` figure shown at key creation is a per-key spending *ceiling*, not actual balance, a
+  real point of confusion worth remembering. **ERP-100**: swapped reversed copy-button roles
+  (question copies question, answer copies Q&A). **ERP-101**: select-all/deselect-all for
+  document scoping. **ERP-102**: floating "jump to latest" once scrolled away from the bottom
+  of a conversation. **ERP-105**: `run_production_sampling` now commits per-message instead of
+  once at the end (crash-safety). **ERP-104**: `production_sample_scores` gained
+  `source_documents` (free — reuses the existing chunk lookup); the harder half (persisting
+  `rerank`/`expand_sections`/document scope, which turned out to not be persisted *anywhere* at
+  all) was split off honestly as **ERP-107** rather than bundled in under time pressure. A live
+  security/abuse review the same session found two more real gaps, filed as **ERP-108** (no
+  rate limiting anywhere on generation/retrieval — a direct cost-exposure vector) and **ERP-109**
+  (no output-side check to catch an ERP-058 prompt-injection-mitigation failure; chosen approach
+  is a cheap deterministic non-LLM post-generation check, logged not blocked, deliberately not an
+  LLM-judge call since that would fight the latency problem this project just spent two sessions
+  fixing). Agreed priority for what's next: 108 → 109 → 107 → 103 (103 stays explicitly
+  low-urgency). Verified: backend 579 passed (was 572), frontend 93 passed (was 86), ruff/mypy/
+  tsc/oxlint clean throughout. Merged to `develop` via PRs #71-#76, promoted to `main` and
+  deployed live via PR #75 (PR #76's ticket-only filings not yet promoted as of this entry).
+  Session log: `.ai/sessions/2026-09-27-erp100-109-ux-openrouter-security.md`.
 
 **Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
