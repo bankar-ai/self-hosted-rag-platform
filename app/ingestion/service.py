@@ -43,18 +43,23 @@ def ingest_pdf(pdf_path: str, source_filename: str, settings: IngestionSettings)
     )
 
 
-def list_documents(owner_id: uuid.UUID) -> DocumentListResponse:
-    """Return `owner_id`'s successfully ingested documents, newest first.
+def list_documents(owner_id: uuid.UUID, limit: int = 50, offset: int = 0) -> DocumentListResponse:
+    """Return one page of `owner_id`'s successfully ingested documents, newest first.
 
     Only covers documents that finished ingestion (a `DocumentRecord` row is only created
     once `embed_and_persist` succeeds) -- a still-pending/processing/failed upload has no
     row here at all, and stays purely a client-tracked job until it either succeeds (and
     shows up in this list) or is dismissed client-side.
+
+    Bounded, not unbounded (ERP-103): fetches `limit + 1` rows to detect whether a further page
+    exists (`has_more`) without a separate `COUNT` query, then trims back to `limit`.
     """
     session_factory = get_session_factory()
     with session_factory() as session:
-        records = list_documents_for_owner(session, owner_id)
+        page = list_documents_for_owner(session, owner_id, limit + 1, offset)
 
+    has_more = len(page) > limit
+    records = page[:limit]
     return DocumentListResponse(
         documents=[
             DocumentSummary(
@@ -64,7 +69,8 @@ def list_documents(owner_id: uuid.UUID) -> DocumentListResponse:
                 parsing_confidence=r.parsing_confidence,
             )
             for r in records
-        ]
+        ],
+        has_more=has_more,
     )
 
 

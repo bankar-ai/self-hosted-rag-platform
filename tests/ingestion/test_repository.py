@@ -253,6 +253,29 @@ def test_list_documents_for_owner_excludes_other_owners_documents():
         assert list_documents_for_owner(session, owner_id) == []
 
 
+def test_list_documents_for_owner_respects_limit_and_offset():
+    owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    doc_ids = [f"doc-page-test-{i}" for i in range(3)]
+    for doc_id in doc_ids:
+        with session_factory() as session:
+            save_document_and_chunks(session, doc_id, f"{doc_id}.pdf", [_chunk(doc_id, 0)], owner_id)
+            session.commit()
+
+    with session_factory() as session:
+        first_page = list_documents_for_owner(session, owner_id, limit=2, offset=0)
+        second_page = list_documents_for_owner(session, owner_id, limit=2, offset=2)
+
+    assert [d.document_id for d in first_page] == list(reversed(doc_ids))[:2]
+    assert [d.document_id for d in second_page] == [doc_ids[0]]
+
+
 def test_delete_document_removes_document_and_chunks_returns_vector_ids():
     document_id = "doc-delete-repo-test"
     chunks = [_chunk(document_id, 0), _chunk(document_id, 1)]

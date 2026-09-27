@@ -27,6 +27,10 @@ const MAX_UPLOAD_SIZE_LABEL = "20 MB";
 // Must match the live `INGESTION_MAX_ACTIVE_JOBS_PER_USER` backend setting (ERP-094).
 const MAX_FILES_PER_UPLOAD = 5;
 
+// ERP-103: page size for GET /documents -- matches the backend default, so a first page load
+// (offset omitted) and an explicit `limit=DOCUMENTS_PAGE_SIZE` request return the same page.
+const DOCUMENTS_PAGE_SIZE = 50;
+
 const IN_PROGRESS_STATUS_STYLES: Record<"pending" | "processing" | "failed", string> = {
   pending: "bg-amber-100 text-amber-700",
   processing: "bg-amber-100 text-amber-700",
@@ -52,6 +56,11 @@ export default function DocumentsPage() {
     userId ? getDocumentsStore(userId).list().filter((doc) => doc.status !== "done") : []
   );
   const [serverDocuments, setServerDocuments] = useState<DocumentSummary[]>([]);
+  // ERP-103: whether a further page of documents exists beyond what's currently loaded, and
+  // whether "Load more" is mid-fetch (disables the button, avoids a double-append on a fast
+  // double click).
+  const [hasMoreDocuments, setHasMoreDocuments] = useState(false);
+  const [isLoadingMoreDocuments, setIsLoadingMoreDocuments] = useState(false);
   // Files chosen or dropped but not yet uploaded (ERP-070) -- upload only starts once the
   // user explicitly clicks "Upload", not on selection/drop.
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
@@ -70,11 +79,30 @@ export default function DocumentsPage() {
   // same device already kicked off (and is therefore already polling) itself.
   const pollingJobIdsRef = useRef<Set<string>>(new Set());
 
+  // Always resets to the first page (ERP-103) -- called on mount and after any mutation
+  // (delete, job hydration) that could change which documents exist, so it must never leave
+  // a stale later page's worth of state lying around.
   async function refreshServerDocuments(): Promise<void> {
-    const response = await apiFetch("/documents");
+    const response = await apiFetch(`/documents?limit=${DOCUMENTS_PAGE_SIZE}&offset=0`);
     if (!response.ok) return;
     const body = (await response.json()) as DocumentListResponse;
     setServerDocuments(body.documents);
+    setHasMoreDocuments(body.has_more);
+  }
+
+  async function loadMoreDocuments(): Promise<void> {
+    setIsLoadingMoreDocuments(true);
+    try {
+      const response = await apiFetch(
+        `/documents?limit=${DOCUMENTS_PAGE_SIZE}&offset=${serverDocuments.length}`
+      );
+      if (!response.ok) return;
+      const body = (await response.json()) as DocumentListResponse;
+      setServerDocuments((prev) => [...prev, ...body.documents]);
+      setHasMoreDocuments(body.has_more);
+    } finally {
+      setIsLoadingMoreDocuments(false);
+    }
   }
 
   // Reads back the account's active (pending/processing/failed) jobs from the server (ERP-095)
@@ -574,6 +602,16 @@ export default function DocumentsPage() {
               </li>
             ))}
           </ul>
+          {hasMoreDocuments && (
+            <Button
+              variant="outline"
+              className="mt-3 self-start"
+              onClick={() => void loadMoreDocuments()}
+              disabled={isLoadingMoreDocuments}
+            >
+              {isLoadingMoreDocuments ? "Loading..." : "Load more"}
+            </Button>
+          )}
         </>
       )}
     </div>

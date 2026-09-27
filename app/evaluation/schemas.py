@@ -1,6 +1,7 @@
 """Pydantic schemas for one evaluation run's per-query results and aggregate summary."""
 
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -91,6 +92,14 @@ class ProductionSampleResult(BaseModel):
             "Deduplicated source filenames the resolved citations came from (ERP-104) -- "
             "`None` when nothing resolved (skipped). Lets a low score be diagnosed (e.g. wrong "
             "document retrieved) without a manual join."
+        ),
+    )
+    retrieval_settings: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The rerank/expand_sections/document_ids the sampled message's generation call "
+            "actually used (ERP-107), copied from `ConversationMessageRecord.retrieval_settings` "
+            "-- `None` when skipped, or for a message persisted before this field existed."
         ),
     )
 

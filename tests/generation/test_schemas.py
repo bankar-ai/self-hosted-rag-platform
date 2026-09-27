@@ -83,6 +83,7 @@ def test_message_round_trip():
         "created_at": now,
         "feedback": None,
         "citations": [],
+        "retrieval_settings": None,
     }
 
 

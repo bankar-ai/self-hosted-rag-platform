@@ -7,7 +7,7 @@ Living summary of what exists in this repository right now. Update in place as s
 - The `.ai/` AI Engineering Operating System is fully built out:
   - `tickets/` — ticket template + lifecycle (ERP-002), tickets ERP-001–013
   - `adr/` — ADR template + lifecycle (ERP-003), ADR-001 ("Adopt Architecture Decision Records"), ADR-002 ("Branch Strategy & CI Approach"), ADR-003 ("Data Layer & Caching Architecture"), ADR-004 ("Automated Secrets Scanning")
-  - `sessions/` — session template + lifecycle (ERP-004), entries: 2026-07-22, 2026-08-01, 2026-08-02 (strengthen-engineering-guidelines), 2026-08-02 (tooling-config), 2026-08-06 (embedding-persistence), 2026-08-08 (retrieval-endpoint), 2026-08-26 (redis-embedding-cache), 2026-08-26 (bm25-hybrid-retrieval), 2026-08-26 (reranking), 2026-08-26 (pageindex-structure-aware-retrieval), 2026-08-31 (generation), 2026-09-01 (conversation-memory), 2026-09-01 (conversation-history-endpoint), 2026-09-04 (harden-embedding-cache), 2026-09-05 (search-vector-index-and-nonlocking-migration)
+  - `sessions/` — session template + lifecycle (ERP-004), entries: 2026-07-22, 2026-08-01, 2026-08-02 (strengthen-engineering-guidelines), 2026-08-02 (tooling-config), 2026-08-06 (embedding-persistence), 2026-08-08 (retrieval-endpoint), 2026-08-26 (redis-embedding-cache), 2026-08-26 (bm25-hybrid-retrieval), 2026-08-26 (reranking), 2026-08-26 (pageindex-structure-aware-retrieval), 2026-08-31 (generation), 2026-09-01 (conversation-memory), 2026-09-01 (conversation-history-endpoint), 2026-09-04 (harden-embedding-cache), 2026-09-05 (search-vector-index-and-nonlocking-migration), ... (see `.ai/sessions/` for the full, growing list through 2026-09-27's erp103-107-108-109-batch)
   - `memory/` — this framework (ERP-005)
 - `docs/architecture.md`, `docs/engineering-guidelines.md`, `docs/roadmap.md` describe the intended project, philosophy, stack, and standards. `docs/architecture.md` also has the target-state architecture diagram (`docs/diagrams/architecture.drawio`/`.png`) and an explicit open-source/free-only dependency constraint.
 - `CLAUDE.md` is a short operational guide pointing into `docs/` and `.ai/`; also documents the mandatory `uv` workflow, the research-before-recommending rule, the automated secrets-scanning guardrail, and the session-log/current-state maintenance habit.
@@ -91,6 +91,30 @@ Living summary of what exists in this repository right now. Update in place as s
 
 - **ERP-041 re-verified retrieval-quality evaluation post-ERP-031 (2026-09-16)**: ran `uv run python -m app.evaluation.run` against real local Ollama and Postgres/Redis. Result: Precision@3=0.333, Recall@3=1.000, MRR=1.000 — an exact match to the ERP-029 baseline, confirming ERP-031's per-owner FAISS partitioning introduced no retrieval-quality regression. No code change needed. No PR (pure verification).
 - **ERP-042 shipped metrics to Grafana Cloud, completing the observability trio (2026-09-16)**: `app/core/telemetry.py`'s `MeterProvider` now attaches a push-based OTLP `PeriodicExportingMetricReader` alongside the existing pull-based `PrometheusMetricReader` (local dev unaffected), mirroring `_build_span_exporter()`/`_build_log_exporter()`'s exact protocol-selection pattern — no new dependency, no new env vars, and the existing `set:alloy-data-write` token turned out to already cover metrics ingestion (no new Grafana Cloud token needed). Deployed to the live VM; live-verified via the Grafana Cloud Explore UI (Prometheus datasource `grafanacloud-microstarfish1843-prom`): real requests against the live app produced `http_server_duration_milliseconds_bucket`/`http_server_active_requests`/`db_client_connections_usage` series filtered by `service_name="self-hosted-rag-platform"`. VM memory re-verified post-deploy at 368Mi available — an exact match to the existing 365-378MB baseline, confirming the push-based exporter costs nothing measurable, same as ERP-039's finding for logs. Verified: ruff/mypy clean, full suite 383 passed, 96.68% coverage. Docs: `docs/deployment.md`'s new "Metrics (Grafana Cloud)" section; `D:\github-projects\gcp-deployment-tracker.md`'s Observability table gained a metrics row. Merged to `develop` via PR #34, promoted to `main` via PR #35 (both 2026-09-16); `develop` and `main` were in sync as of that merge.
+
+- **ERP-103, ERP-107, ERP-108, ERP-109 all Done (2026-09-27)** — the four remaining open
+  Backlog tickets from the ERP-100-109 planning batch, all closed in one session (ERP-106
+  stayed untouched, separately paused on the user's OpenRouter payment approval). **ERP-108**
+  — per-user rate limiting on `/generation/query`, `/generation/query/stream`, and
+  `/retrieval/query` (new `app/core/rate_limit.py`'s Redis-backed fixed-window `RateLimiter`,
+  a new `rate_limited(scope)` auth dependency mirroring `require_role`'s precomputed-singleton
+  pattern; `RATE_LIMIT_REQUESTS_PER_MINUTE`, default 20, fails open — logged — on a Redis
+  outage rather than taking every user down with it). **ERP-109** — a cheap, deterministic,
+  non-LLM output-side check (new `app/generation/guardrail.py`) for verbatim `SYSTEM_PROMPT`
+  leakage or known injection-compliance markers (mirrors ERP-058's own PWNED attack case),
+  wired into all four places an answer is finalized in `app/generation/service.py`;
+  detection/logging only, never blocks a response. **ERP-103** — `GET /conversations`/
+  `GET /documents` gained bounded `limit`/`offset` + a `has_more` field (cap-with-"show more",
+  not real cursor pagination, per the ticket's own steer); `ChatPage.tsx`'s sidebar and
+  `DocumentsPage.tsx` both gained a "Load more" affordance. **ERP-107** — a new
+  `conversation_messages.retrieval_settings` JSONB column (migration `77b31e276298`, mirroring
+  the existing `citations` column's pattern; a matching column added to
+  `production_sample_scores` too) persists the `rerank`/`expand_sections`/`document_ids` each
+  assistant turn's generation call actually used, closing the diagnostic gap ERP-097 surfaced
+  (no way to know after the fact which settings produced a low-scoring historical answer).
+  Verified throughout: backend ruff/mypy clean, full suite 599 passed (up from 578); frontend
+  95 vitest tests passed (was 93), `tsc -b`/`oxlint`/`vite build` clean. Session log:
+  `.ai/sessions/2026-09-27-erp103-107-108-109-batch.md`.
 
 ## Next Planned Work
 
@@ -644,6 +668,33 @@ Living summary of what exists in this repository right now. Update in place as s
   existing subscriptions can't be repurposed to power this app's backend calls regardless of
   which provider is chosen. No ticket opened yet; the user has a specific idea in mind not yet
   detailed, to be picked up in a later session.
+- **ERP-100/101/102/104/105 Done, ERP-106 In Progress (2026-09-27)**: a prioritized batch
+  session following the 2026-09-26 investigation. **ERP-106**: `GenerationSettings.provider`
+  switch (`"ollama"` default unchanged; `"openrouter"` new) with a new `OpenRouterLLMClient`
+  (OpenAI-compatible via `httpx`, no new dependency) and a `get_default_llm_client` factory
+  centralizing all 7 previous `OllamaLLMClient(settings)` call sites in
+  `app/generation/service.py`. Deployed live and switched on in `~/app/.env`, but **blocked on
+  the user's OpenRouter payment settling** (confirmed via OpenRouter's own API —
+  `total_credits: 0` despite a $5 purchase, a pending autopay debit dated 2026-09-28) — the
+  `$100` figure shown at key creation is a per-key spending *ceiling*, not actual balance, a
+  real point of confusion worth remembering. **ERP-100**: swapped reversed copy-button roles
+  (question copies question, answer copies Q&A). **ERP-101**: select-all/deselect-all for
+  document scoping. **ERP-102**: floating "jump to latest" once scrolled away from the bottom
+  of a conversation. **ERP-105**: `run_production_sampling` now commits per-message instead of
+  once at the end (crash-safety). **ERP-104**: `production_sample_scores` gained
+  `source_documents` (free — reuses the existing chunk lookup); the harder half (persisting
+  `rerank`/`expand_sections`/document scope, which turned out to not be persisted *anywhere* at
+  all) was split off honestly as **ERP-107** rather than bundled in under time pressure. A live
+  security/abuse review the same session found two more real gaps, filed as **ERP-108** (no
+  rate limiting anywhere on generation/retrieval — a direct cost-exposure vector) and **ERP-109**
+  (no output-side check to catch an ERP-058 prompt-injection-mitigation failure; chosen approach
+  is a cheap deterministic non-LLM post-generation check, logged not blocked, deliberately not an
+  LLM-judge call since that would fight the latency problem this project just spent two sessions
+  fixing). Agreed priority for what's next: 108 → 109 → 107 → 103 (103 stays explicitly
+  low-urgency). Verified: backend 579 passed (was 572), frontend 93 passed (was 86), ruff/mypy/
+  tsc/oxlint clean throughout. Merged to `develop` via PRs #71-#76, promoted to `main` and
+  deployed live via PR #75 (PR #76's ticket-only filings not yet promoted as of this entry).
+  Session log: `.ai/sessions/2026-09-27-erp100-109-ux-openrouter-security.md`.
 
 **Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to

@@ -110,6 +110,7 @@ def run_production_sampling(
                 answer_relevancy=scores.answer_relevancy,
                 context_precision=scores.context_precision,
                 source_documents=source_documents,
+                retrieval_settings=message.retrieval_settings,
             )
             results.append(result)
             save_production_sample_score(session, result)

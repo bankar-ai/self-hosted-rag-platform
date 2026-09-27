@@ -46,9 +46,15 @@ class DocumentSummary(BaseModel):
 
 
 class DocumentListResponse(BaseModel):
-    """The caller's successfully ingested documents, newest first."""
+    """One page of the caller's successfully ingested documents, newest first (ERP-103).
+
+    `has_more` is `True` when a further page exists beyond this one (fetch again with a
+    larger `offset` to get it) -- lets the frontend show a "Load more" affordance instead of
+    guessing from whether this page happened to come back full.
+    """
 
     documents: list[DocumentSummary]
+    has_more: bool = False
 
 
 class ChunkDetailResponse(BaseModel):

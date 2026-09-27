@@ -9,14 +9,34 @@ os.environ.setdefault(
 # Set here, not just in tests/auth/conftest.py, so any test file can safely construct
 # AuthSettings regardless of pytest's (alphabetical) collection order.
 os.environ.setdefault("AUTH_JWT_SECRET_KEY", "test-only-secret-do-not-use-in-production")
+# Dedicated test-only Redis logical DB for the rate limiter (ERP-108) -- shared here (not just
+# tests/core/conftest.py) since generation/retrieval router tests also need it.
+os.environ.setdefault("RATE_LIMIT_REDIS_URL", "redis://localhost:6379/3")
 
 import fitz  # noqa: E402
 import pytest  # noqa: E402
+import redis  # noqa: E402
 
 from app.auth.models import RefreshTokenRecord, UserRecord  # noqa: E402, F401
 from app.core.db import get_engine  # noqa: E402
+from app.core.rate_limit import RateLimitSettings  # noqa: E402
 from app.evaluation.models import EvaluationRunRecord  # noqa: E402, F401
 from app.ingestion.models import Base  # noqa: E402
+
+
+@pytest.fixture
+def rate_limit_settings() -> RateLimitSettings:
+    """`RateLimitSettings` pointed at the dedicated test Redis logical DB."""
+    return RateLimitSettings(redis_url=os.environ["RATE_LIMIT_REDIS_URL"])
+
+
+@pytest.fixture(autouse=True)
+def _flush_rate_limit_redis_db(rate_limit_settings: RateLimitSettings):
+    """Flush the rate limiter's test-only Redis logical DB before and after every test."""
+    client = redis.Redis.from_url(rate_limit_settings.redis_url)
+    client.flushdb()
+    yield
+    client.flushdb()
 
 
 @pytest.fixture(scope="session", autouse=True)

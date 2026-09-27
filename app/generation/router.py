@@ -6,10 +6,10 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, rate_limited
 from app.auth.schemas import CurrentUser
 from app.generation.schemas import (
     ConversationHistoryResponse,
@@ -37,10 +37,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/generation", tags=["generation"])
 conversations_router = APIRouter(prefix="/conversations", tags=["conversations"])
 
+# ERP-108: precomputed once at import time, not inline in a `Depends(...)` default -- calling
+# `rate_limited(...)` on every request would be wasteful, and ruff (B008) flags a function call
+# in an argument default regardless.
+_rate_limited_generation = rate_limited("generation")
+
 
 @router.post("/query")
 def query(
-    query_request: GenerationQuery, current_user: CurrentUser = Depends(get_current_user)
+    query_request: GenerationQuery, current_user: CurrentUser = Depends(_rate_limited_generation)
 ) -> GenerationResponse:
     """Run retrieval + LLM synthesis and return a grounded, cited answer."""
     try:
@@ -92,7 +97,7 @@ def _event_stream(query_request: GenerationQuery, owner_id: uuid.UUID) -> Iterat
 
 @router.post("/query/stream")
 def query_stream(
-    query_request: GenerationQuery, current_user: CurrentUser = Depends(get_current_user)
+    query_request: GenerationQuery, current_user: CurrentUser = Depends(_rate_limited_generation)
 ) -> StreamingResponse:
     """Run retrieval + LLM synthesis, streaming the answer as Server-Sent Events.
 
@@ -110,9 +115,11 @@ def query_stream(
 @conversations_router.get("")
 def list_conversations_endpoint(
     current_user: CurrentUser = Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> ConversationListResponse:
-    """Return the caller's conversations, newest first."""
-    return list_conversations(current_user.id)
+    """Return one page of the caller's conversations, newest first (ERP-103)."""
+    return list_conversations(current_user.id, limit=limit, offset=offset)
 
 
 @conversations_router.get("/{conversation_id}")

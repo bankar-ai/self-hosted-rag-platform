@@ -3,6 +3,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.rate_limit import RateLimiter
 from app.embedding.client import OllamaEmbeddingClient
 from app.embedding.config import get_embedding_settings
 from app.main import app
@@ -50,6 +51,20 @@ def test_query_on_empty_index_returns_empty_results(auth_headers):
 def test_query_rejects_empty_query_string(auth_headers):
     response = client.post("/retrieval/query", json={"query": ""}, headers=auth_headers)
     assert response.status_code == 422
+
+
+def test_query_past_the_rate_limit_returns_429_with_retry_after(
+    auth_headers, monkeypatch, rate_limit_settings
+):
+    limited_settings = rate_limit_settings.model_copy(update={"requests_per_minute": 1})
+    monkeypatch.setattr(
+        "app.auth.dependencies.get_default_rate_limiter", lambda: RateLimiter(limited_settings)
+    )
+    first = client.post("/retrieval/query", json={"query": "anything"}, headers=auth_headers)
+    assert first.status_code == 200
+    second = client.post("/retrieval/query", json={"query": "anything"}, headers=auth_headers)
+    assert second.status_code == 429
+    assert "Retry-After" in second.headers
 
 
 def test_query_rejects_top_k_out_of_bounds(auth_headers):
