@@ -41,6 +41,11 @@ def run_production_sampling(
     greeting or "not enough information" short-circuit), or every cited chunk's document has
     since been deleted. A skipped message still gets a `ProductionSampleScoreRecord` (all score
     fields `None`), so it's never retried on a later run.
+
+    Commits after every message, not once at the end (ERP-105) -- a judge call can legitimately
+    take minutes, so a crash partway through a long batch (process killed, connection dropped,
+    an unhandled judge exception) only loses the one message in flight, never everything
+    already scored before it.
     """
     judge = judge or RagasJudge()
     session_factory = session_factory or get_session_factory()
@@ -62,6 +67,7 @@ def run_production_sampling(
                 )
                 results.append(result)
                 save_production_sample_score(session, result)
+                session.commit()
                 continue
 
             citation_chunk_ids = [
@@ -83,6 +89,7 @@ def run_production_sampling(
                 )
                 results.append(result)
                 save_production_sample_score(session, result)
+                session.commit()
                 continue
 
             scores = judge.score(preceding.content, message.content, contexts)
@@ -97,8 +104,7 @@ def run_production_sampling(
             )
             results.append(result)
             save_production_sample_score(session, result)
-
-        session.commit()
+            session.commit()
 
     scored = [r for r in results if not r.skipped]
     faithfulness_mean, _ = mean_excluding_none(r.faithfulness for r in scored)

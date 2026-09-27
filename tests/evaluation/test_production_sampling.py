@@ -133,3 +133,54 @@ def test_run_production_sampling_respects_limit():
     summary = run_production_sampling(judge=_FixedFakeJudge(), limit=2, session_factory=session_factory)
 
     assert summary.num_candidates == 2
+
+
+def test_run_production_sampling_persists_prior_scores_when_a_later_one_crashes():
+    """ERP-105: a mid-batch crash must not lose already-scored messages before it."""
+
+    class _CrashesOnSecondCallJudge:
+        def __init__(self):
+            self.calls = 0
+
+        def score(self, user_input, response, retrieved_contexts):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("simulated judge failure")
+            return GenerationScores(faithfulness=0.9, answer_relevancy=0.8, context_precision=0.7)
+
+    session_factory = get_session_factory()
+    message_ids = []
+    with session_factory() as session:
+        owner = create_user(session, f"prod-sample-crash-{uuid.uuid4()}@test", "x")
+        session.flush()
+        for i in range(2):
+            document_id = str(uuid.uuid4())
+            chunk_id = f"{document_id}-0"
+            chunk = _make_chunk(document_id, chunk_id, f"context {i}")
+            save_document_and_chunks(session, document_id, "doc.pdf", [chunk], owner.id)
+            conversation_id = uuid.uuid4()
+            get_or_create_conversation(session, conversation_id, owner.id)
+            append_message(session, conversation_id, "user", f"question {i}")
+            assistant_message = append_message(
+                session, conversation_id, "assistant", f"answer {i}", citations=[{"chunk_id": chunk_id}]
+            )
+            message_ids.append(assistant_message.id)
+        session.commit()
+
+    try:
+        run_production_sampling(
+            judge=_CrashesOnSecondCallJudge(), limit=50, session_factory=session_factory
+        )
+    except RuntimeError:
+        pass
+
+    with session_factory() as session:
+        from app.evaluation.models import ProductionSampleScoreRecord
+
+        rows = (
+            session.query(ProductionSampleScoreRecord)
+            .filter(ProductionSampleScoreRecord.message_id == message_ids[0])
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].faithfulness == 0.9
