@@ -48,10 +48,10 @@ function stubChatFetch(
           )
         );
       }
-      if (url.endsWith("/conversations")) {
+      if ((url.includes("/conversations?") || url.endsWith("/conversations"))) {
         return Promise.resolve(new Response(JSON.stringify({ conversations: [] }), { status: 200 }));
       }
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return Promise.resolve(new Response(JSON.stringify({ documents: [] }), { status: 200 }));
       }
       if (url.endsWith("/generation/warmup")) {
@@ -92,6 +92,48 @@ describe("ChatPage", () => {
         expect.objectContaining({ method: "POST" })
       )
     );
+  });
+
+  it("shows a Load more button when has_more is true and appends the next page on click (ERP-103)", async () => {
+    stubChatFetch(
+      () => sseResponse(["event: done\ndata: {}\n\n"]),
+      (url) => {
+        if (url.includes("/conversations?") && url.includes("offset=0")) {
+          return new Response(
+            JSON.stringify({
+              conversations: [{ conversation_id: "c1", title: "First chat", preview: null }],
+              has_more: true,
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.includes("/conversations?") && url.includes("offset=1")) {
+          return new Response(
+            JSON.stringify({
+              conversations: [{ conversation_id: "c2", title: "Second chat", preview: null }],
+              has_more: false,
+            }),
+            { status: 200 }
+          );
+        }
+        return undefined;
+      }
+    );
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    await screen.findByText("First chat");
+    const loadMoreButton = await screen.findByRole("button", { name: /load more/i });
+
+    await userEvent.click(loadMoreButton);
+
+    await screen.findByText("Second chat");
+    expect(screen.getByText("First chat")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
   });
 
   it(
@@ -169,7 +211,7 @@ describe("ChatPage", () => {
     stubChatFetch(
       () => sseResponse(["event: done\ndata: {}\n\n"]),
       (url) => {
-        if (url.endsWith("/documents")) {
+        if ((url.includes("/documents?") || url.endsWith("/documents"))) {
           return new Response(
             JSON.stringify({
               documents: [

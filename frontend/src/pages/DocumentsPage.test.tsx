@@ -31,7 +31,7 @@ function stubAuthAndEmptyDocuments(extra?: (url: string, init?: RequestInit) => 
       }
       const extraResponse = extra?.(url, init);
       if (extraResponse) return Promise.resolve(extraResponse);
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return Promise.resolve(new Response(JSON.stringify({ documents: [] }), { status: 200 }));
       }
       if (url.endsWith("/ingestion/jobs")) {
@@ -54,6 +54,45 @@ describe("DocumentsPage", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("shows a Load more button when has_more is true and appends the next page on click (ERP-103)", async () => {
+    stubAuthAndEmptyDocuments((url) => {
+      if (url.includes("/documents?") && url.includes("offset=0")) {
+        return new Response(
+          JSON.stringify({
+            documents: [{ document_id: "d1", filename: "first.pdf", parsing_confidence: "high" }],
+            has_more: true,
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.includes("/documents?") && url.includes("offset=1")) {
+        return new Response(
+          JSON.stringify({
+            documents: [{ document_id: "d2", filename: "second.pdf", parsing_confidence: "high" }],
+            has_more: false,
+          }),
+          { status: 200 }
+        );
+      }
+      return null;
+    });
+
+    render(
+      <AuthProvider>
+        <DocumentsPage />
+      </AuthProvider>
+    );
+
+    await screen.findByText("first.pdf");
+    const loadMoreButton = await screen.findByRole("button", { name: /load more/i });
+
+    await userEvent.click(loadMoreButton);
+
+    await screen.findByText("second.pdf");
+    expect(screen.getByText("first.pdf")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /load more/i })).not.toBeInTheDocument();
   });
 
   it("stages a selected file without uploading it until Upload is clicked", async () => {
@@ -137,7 +176,7 @@ describe("DocumentsPage", () => {
 
   it("shows a parsing-confidence badge for each document (ERP-076)", async () => {
     stubAuthAndEmptyDocuments((url) => {
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return new Response(
           JSON.stringify({
             documents: [
@@ -174,7 +213,7 @@ describe("DocumentsPage", () => {
 
   it("shows a confirmation before deleting, and does nothing if declined", async () => {
     stubAuthAndEmptyDocuments((url) => {
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return new Response(
           JSON.stringify({
             documents: [{ document_id: "d1", filename: "existing.pdf", created_at: "2026-01-01T00:00:00Z" }],
@@ -206,7 +245,7 @@ describe("DocumentsPage", () => {
         deleteCalls.push(url);
         return new Response(null, { status: 204 });
       }
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return new Response(
           JSON.stringify({
             documents: [{ document_id: "d1", filename: "existing.pdf", created_at: "2026-01-01T00:00:00Z" }],
@@ -238,7 +277,7 @@ describe("DocumentsPage", () => {
         deleteCalls.push(url);
         return new Response(null, { status: 204 });
       }
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return new Response(
           JSON.stringify({
             documents: [
@@ -359,7 +398,7 @@ describe("DocumentsPage", () => {
       if (url.includes("/documents/") && init?.method === "DELETE") {
         return new Response(JSON.stringify({ detail: "forbidden" }), { status: 403 });
       }
-      if (url.endsWith("/documents")) {
+      if ((url.includes("/documents?") || url.endsWith("/documents"))) {
         return new Response(
           JSON.stringify({
             documents: [{ document_id: "d1", filename: "existing.pdf", created_at: "2026-01-01T00:00:00Z" }],

@@ -257,7 +257,7 @@ def test_list_documents_empty_for_new_user(auth_headers):
     response = client.get("/documents", headers=auth_headers)
 
     assert response.status_code == 200
-    assert response.json() == {"documents": []}
+    assert response.json() == {"documents": [], "has_more": False}
 
 
 def test_list_documents_returns_document_after_successful_ingestion(simple_text_pdf, auth_headers):
@@ -294,7 +294,31 @@ def test_list_documents_does_not_include_another_users_documents(simple_text_pdf
     response = client.get("/documents", headers=other_user_headers)
 
     assert response.status_code == 200
-    assert response.json() == {"documents": []}
+    assert response.json() == {"documents": [], "has_more": False}
+
+
+def test_list_documents_pagination_has_more_and_limit(simple_text_pdf, auth_headers):
+    pdf_bytes = _read_fixture_bytes(simple_text_pdf)
+    for name in ("first.pdf", "second.pdf"):
+        upload = client.post(
+            "/ingestion/pdf",
+            files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")},
+            headers=auth_headers,
+        )
+        _poll_until_done(upload.json()["job_id"], auth_headers)
+
+    first_page = client.get("/documents", params={"limit": 1}, headers=auth_headers)
+    assert first_page.status_code == 200
+    first_body = first_page.json()
+    assert len(first_body["documents"]) == 1
+    assert first_body["has_more"] is True
+
+    second_page = client.get("/documents", params={"limit": 1, "offset": 1}, headers=auth_headers)
+    assert second_page.status_code == 200
+    second_body = second_page.json()
+    assert len(second_body["documents"]) == 1
+    assert second_body["has_more"] is False
+    assert first_body["documents"][0]["document_id"] != second_body["documents"][0]["document_id"]
 
 
 def test_delete_document_removes_it_from_the_list(simple_text_pdf, auth_headers):

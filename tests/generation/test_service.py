@@ -290,6 +290,50 @@ def test_generate_with_new_conversation_id_creates_conversation_and_persists_tur
     assert messages[1].content == "the answer [1]"
 
 
+def test_generate_persists_the_retrieval_settings_actually_used(monkeypatch):
+    """ERP-107: rerank/expand_sections/document_ids round-trip through a fresh history read."""
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        session.commit()
+
+    captured_kwargs = {}
+
+    def _fake_search(query, top_k, owner_id, **kwargs):
+        captured_kwargs.update(kwargs)
+        return [_chunk("c1")]
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", _fake_search)
+    fake_llm = _FakeLLMClient("the answer [1]")
+
+    generate(
+        "what is X?",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        conversation_id=conversation_id,
+        rerank=True,
+        expand_sections=True,
+        document_ids=["doc-a", "doc-b"],
+        llm_client=fake_llm,
+    )
+
+    assert captured_kwargs["rerank"] is True
+    assert captured_kwargs["expand_sections"] is True
+    assert captured_kwargs["document_ids"] == ["doc-a", "doc-b"]
+
+    history = get_conversation_history(conversation_id, _TEST_OWNER_ID)
+    assert history is not None
+    assistant_message = next(m for m in history.messages if m.role == "assistant")
+    assert assistant_message.retrieval_settings == {
+        "rerank": True,
+        "expand_sections": True,
+        "document_ids": ["doc-a", "doc-b"],
+    }
+    user_message = next(m for m in history.messages if m.role == "user")
+    assert user_message.retrieval_settings is None
+
+
 def test_generate_first_turn_of_conversation_does_not_call_rewrite(monkeypatch):
     conversation_id = uuid.uuid4()
     session_factory = get_session_factory()
@@ -830,3 +874,27 @@ def test_list_conversations_no_conversations_returns_empty_list():
     response = list_conversations(uuid.uuid4())
 
     assert response.conversations == []
+    assert response.has_more is False
+
+
+def test_list_conversations_has_more_true_when_a_further_page_exists():
+    owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=owner_id, email=f"{owner_id}@test", hashed_password="x"))
+        session.commit()
+
+    for _ in range(3):
+        with session_factory() as session:
+            get_or_create_conversation(session, uuid.uuid4(), owner_id)
+            session.commit()
+
+    first_page = list_conversations(owner_id, limit=2, offset=0)
+    assert len(first_page.conversations) == 2
+    assert first_page.has_more is True
+
+    second_page = list_conversations(owner_id, limit=2, offset=2)
+    assert len(second_page.conversations) == 1
+    assert second_page.has_more is False

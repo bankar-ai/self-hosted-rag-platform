@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -106,6 +106,14 @@ class Message(BaseModel):
     created_at: datetime
     feedback: Literal["up", "down"] | None = None
     citations: list[Citation] = Field(default_factory=list)
+    retrieval_settings: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The rerank/expand_sections/document_ids this assistant turn's generation call "
+            "actually used (ERP-107) -- always `None` for a 'user'-role message and for any "
+            "message persisted before this field existed."
+        ),
+    )
 
 
 class ConversationHistoryResponse(BaseModel):
@@ -136,9 +144,15 @@ class RenameConversationRequest(BaseModel):
 
 
 class ConversationListResponse(BaseModel):
-    """The caller's conversations, newest first."""
+    """One page of the caller's conversations, newest first (ERP-103).
+
+    `has_more` is `True` when a further page exists beyond this one (fetch again with a
+    larger `offset` to get it) -- lets the frontend show a "Load more" affordance instead of
+    guessing from whether this page happened to come back full.
+    """
 
     conversations: list[ConversationSummary]
+    has_more: bool = False
 
 
 class SetMessageFeedbackRequest(BaseModel):

@@ -41,6 +41,12 @@ class ConversationMessageRecord(Base):
     # live response/stream. Always `None` for a "user"-role message and for any message
     # persisted before this column existed.
     citations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, default=None)
+    # ERP-107: the retrieval settings this assistant turn actually used
+    # (`{"rerank": bool, "expand_sections": bool, "document_ids": list[str] | None}`) --
+    # previously these existed only as transient request parameters, with no way to know
+    # after the fact which settings produced a given historical answer. Always `None` for a
+    # "user"-role message and for any message persisted before this column existed.
+    retrieval_settings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
 
 
 class MessageFeedbackRecord(Base):

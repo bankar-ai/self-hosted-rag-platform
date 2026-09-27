@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from app.core.db import get_session_factory
 from app.generation.client import LLMClient, get_default_llm_client
 from app.generation.config import GenerationSettings, get_generation_settings
+from app.generation.guardrail import check_output_guardrail
 from app.generation.prompt import SYSTEM_PROMPT, build_prompt
 from app.generation.repository import (
     append_message,
@@ -119,6 +120,17 @@ def _citations_for(cited: list[tuple[int, RetrievedChunk]], reranked: bool) -> l
     ]
 
 
+def _retrieval_settings_dict(
+    rerank: bool, expand_sections: bool, document_ids: list[str] | None
+) -> dict[str, Any]:
+    """Build the persisted-per-turn retrieval settings dict (ERP-107).
+
+    Captures exactly the retrieval-affecting request parameters `generate`/`generate_stream`
+    were called with -- not a resolved/expanded document set, just what the caller asked for.
+    """
+    return {"rerank": rerank, "expand_sections": expand_sections, "document_ids": document_ids}
+
+
 def warmup_llm(llm_client: LLMClient | None = None) -> None:
     """Best-effort ping to wake a scale-to-zero LLM backend before a real request needs it.
 
@@ -189,6 +201,7 @@ def generate(
         llm_client = llm_client or get_default_llm_client(settings)
         user_prompt, included_chunks = build_prompt(query, chunks, settings.max_context_chars)
         answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
+        check_output_guardrail(answer, conversation_id=None, message_id=None)
         citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
         return GenerationResponse(answer=answer, citations=citations, conversation_id=None)
 
@@ -241,8 +254,11 @@ def generate(
             "assistant",
             answer,
             citations=[c.model_dump() for c in citations],
+            retrieval_settings=_retrieval_settings_dict(rerank, expand_sections, document_ids),
         )
         write_session.commit()
+
+    check_output_guardrail(answer, conversation_id=conversation_id, message_id=assistant_record.id)
 
     return GenerationResponse(
         answer=answer,
@@ -311,6 +327,7 @@ def generate_stream(
                 answer_parts.append(piece)
                 yield "token", {"text": piece}
             answer = "".join(answer_parts)
+            check_output_guardrail(answer, conversation_id=None, message_id=None)
             citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
             yield "citations", {"citations": [c.model_dump() for c in citations]}
             yield "done", {"conversation_id": None}
@@ -445,8 +462,11 @@ def _run_stateful_generation(
                 "assistant",
                 answer,
                 citations=[c.model_dump() for c in citations],
+                retrieval_settings=_retrieval_settings_dict(rerank, expand_sections, document_ids),
             )
             write_session.commit()
+
+        check_output_guardrail(answer, conversation_id=conversation_id, message_id=assistant_record.id)
 
         event_queue.put(
             (
@@ -493,23 +513,29 @@ def get_conversation_history(
             created_at=record.created_at,
             feedback=feedback_by_message_id.get(record.id),
             citations=[Citation(**c) for c in (record.citations or [])],
+            retrieval_settings=record.retrieval_settings,
         )
         for record in records
     ]
     return ConversationHistoryResponse(conversation_id=conversation_id, messages=messages)
 
 
-def list_conversations(owner_id: uuid.UUID) -> ConversationListResponse:
-    """Return `owner_id`'s conversations, newest first, each with a preview of its first message.
+def list_conversations(owner_id: uuid.UUID, limit: int = 50, offset: int = 0) -> ConversationListResponse:
+    """Return one page of `owner_id`'s conversations, newest first, each with a first-message preview.
 
     This is the fix for conversation history not surviving a login on a new browser/device:
     full history was always persisted server-side (see `get_conversation_history`), but there
     was previously no way to enumerate a caller's conversations at all -- the frontend sidebar
     relied solely on a client-side cache that a fresh browser/device never had.
+
+    Bounded, not unbounded (ERP-103): fetches `limit + 1` rows to detect whether a further page
+    exists (`has_more`) without a separate `COUNT` query, then trims back to `limit`.
     """
     session_factory = get_session_factory()
     with session_factory() as session:
-        conversations = list_conversations_for_owner(session, owner_id)
+        page = list_conversations_for_owner(session, owner_id, limit + 1, offset)
+        has_more = len(page) > limit
+        conversations = page[:limit]
         previews = get_first_user_messages(session, [c.id for c in conversations])
 
     return ConversationListResponse(
@@ -521,7 +547,8 @@ def list_conversations(owner_id: uuid.UUID) -> ConversationListResponse:
                 title=c.title,
             )
             for c in conversations
-        ]
+        ],
+        has_more=has_more,
     )
 
 
