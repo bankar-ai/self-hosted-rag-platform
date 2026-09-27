@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
@@ -137,6 +137,98 @@ describe("ChatPage", () => {
 
     await screen.findByText("hi");
     expect(screen.queryByText(/waking up the model/i)).not.toBeInTheDocument();
+  });
+
+  it("question's copy button copies only the question; answer's copies the Q&A pair (ERP-100)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    stubChatFetch(() => sseResponse(['event: token\ndata: {"text": "hi"}\n\n', "event: done\ndata: {}\n\n"]));
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    const input = await screen.findByPlaceholderText(/ask a question/i);
+    await userEvent.type(input, "What does the doc say?");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("hi");
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(writeText).toHaveBeenLastCalledWith("What does the doc say?");
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy Q&A" }));
+    expect(writeText).toHaveBeenLastCalledWith(
+      expect.stringContaining("What does the doc say?")
+    );
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("hi"));
+  });
+
+  it("select-all/deselect-all toggles every document's checkbox at once (ERP-101)", async () => {
+    stubChatFetch(
+      () => sseResponse(["event: done\ndata: {}\n\n"]),
+      (url) => {
+        if (url.endsWith("/documents")) {
+          return new Response(
+            JSON.stringify({
+              documents: [
+                { document_id: "d1", filename: "one.pdf", parsing_confidence: "high" },
+                { document_id: "d2", filename: "two.pdf", parsing_confidence: "high" },
+              ],
+            }),
+            { status: 200 }
+          );
+        }
+        return undefined;
+      }
+    );
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    const box1 = await screen.findByRole("checkbox", { name: /one\.pdf/i });
+    const box2 = screen.getByRole("checkbox", { name: /two\.pdf/i });
+    expect(box1).toBeChecked();
+    expect(box2).toBeChecked();
+
+    await userEvent.click(screen.getByRole("button", { name: "Deselect all" }));
+    expect(box1).not.toBeChecked();
+    expect(box2).not.toBeChecked();
+    expect(screen.getByText(/no documents selected/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Select all" }));
+    expect(box1).toBeChecked();
+    expect(box2).toBeChecked();
+    expect(screen.queryByText(/no documents selected/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a jump-to-latest control once scrolled away from the bottom, and it scrolls back (ERP-102)", async () => {
+    stubChatFetch(() => sseResponse(["event: done\ndata: {}\n\n"]));
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+    await screen.findByPlaceholderText(/ask a question/i);
+
+    expect(screen.queryByRole("button", { name: /jump to latest/i })).not.toBeInTheDocument();
+
+    const container = document.querySelector(".h-full.overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(container, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(container, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(container, "scrollTop", { value: 0, configurable: true, writable: true });
+    fireEvent.scroll(container);
+
+    const jumpButton = await screen.findByRole("button", { name: /jump to latest/i });
+
+    (Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).mockClear();
+    await userEvent.click(jumpButton);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
   it("footer citation list displays the citation's own marker, not its array position (ERP-098)", async () => {
