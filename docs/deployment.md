@@ -20,6 +20,26 @@ This checks both `GenerationSettings.model` and `EmbeddingSettings.model` agains
 their configured hosts and exits non-zero if either is missing. Wire this into any deployment
 script as a pre-flight check (see ERP-037) rather than discovering a mismatch from a live 500.
 
+## Generation provider: self-hosted Ollama vs. hosted OpenRouter (ERP-106)
+
+`GenerationSettings.provider` (`GENERATION_PROVIDER`) selects which `LLMClient` implementation
+`app/generation/client.py`'s `get_default_llm_client` builds:
+
+- `"ollama"` (default, unchanged): self-hosted/Modal-backed, via `GENERATION_OLLAMA_HOST`. Free
+  at this project's usage scale, but pays a real scale-to-zero cold-start cost when idle
+  (measured at 75-250+ seconds in live traces -- see ERP-097's session log) -- both the
+  `POST /generation/warmup` mitigation (ERP-091) and this cost are specific to this provider.
+- `"openrouter"`: routes to OpenRouter's always-on, shared hosted infrastructure via its
+  OpenAI-compatible API (`GENERATION_OPENROUTER_API_KEY`/`GENERATION_OPENROUTER_MODEL`/
+  `GENERATION_OPENROUTER_BASE_URL`). No cold start to hide -- `warmup_llm`'s ping is a
+  documented no-op for this provider -- but a real per-token cost (cheap for an open model like
+  Gemma; check OpenRouter's current pricing page before choosing a model).
+
+Switching is a config-only change -- no code, no migration. `EMBEDDING_MODEL`/embedding
+generation is **not** affected by this setting; embeddings remain on the self-hosted/Modal path
+regardless, since moving them would mean re-embedding the entire FAISS index against a different
+model (a separate, larger decision, not yet made).
+
 ## Hardware / VRAM sizing
 
 There is no universal safe number -- it depends on the exact model tag, its quantization, and the
