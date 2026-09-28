@@ -3,11 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
-import { setTokens } from "../lib/tokenStorage";
+import { setStoredUserId } from "../lib/tokenStorage";
 import IntroModal from "./IntroModal";
 
 function renderAuthenticated() {
-  setTokens({ accessToken: "a", refreshToken: "b" });
+  setStoredUserId("u1");
   return render(
     <MemoryRouter>
       <AuthProvider>

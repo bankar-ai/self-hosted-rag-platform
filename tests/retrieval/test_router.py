@@ -12,6 +12,19 @@ from tests.auth_helpers import register_and_login
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cookie_jar():
+    """Clear the shared `client`'s cookie jar before/after each test (ERP-116).
+
+    Cookie-based auth is client-scoped, not request-scoped like the old Authorization header
+    was -- without this, a session left on `client` by one test could silently authenticate a
+    later test that never logged in itself.
+    """
+    client.cookies.clear()
+    yield
+    client.cookies.clear()
+
+
 def _register_and_login(prefix: str) -> dict[str, str]:
     return register_and_login(client, prefix)
 
@@ -186,7 +199,11 @@ def test_query_with_empty_document_ids_returns_no_results(simple_text_pdf, auth_
 
 def test_query_does_not_return_another_users_document(simple_text_pdf):
     owner_a_headers = _register_and_login("isolation-a")
-    owner_b_headers = _register_and_login("isolation-b")
+    # ERP-116: cookie-based auth is client-scoped -- owner b needs its own TestClient, or
+    # logging it in here would overwrite `client`'s cookies (owner a's session) before owner
+    # a's own upload/poll calls below even run.
+    other_client = TestClient(app)
+    owner_b_headers = register_and_login(other_client, "isolation-b")
 
     with open(simple_text_pdf, "rb") as pdf_file:
         upload = client.post(
@@ -206,7 +223,7 @@ def test_query_does_not_return_another_users_document(simple_text_pdf):
         time.sleep(0.1)
     assert status_body["status"] == "done"
 
-    response = client.post(
+    response = other_client.post(
         "/retrieval/query",
         json={"query": "introduction", "top_k": 3},
         headers=owner_b_headers,

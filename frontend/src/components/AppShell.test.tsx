@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
-import { setTokens } from "../lib/tokenStorage";
+import { setStoredUserId } from "../lib/tokenStorage";
 import AuthGuard from "./AuthGuard";
 import AppShell from "./AppShell";
 
@@ -39,7 +39,7 @@ describe("AppShell", () => {
     vi.stubGlobal("fetch", fetchMock);
     // isAuthenticated (read by AuthGuard below) is derived from whether tokens are stored --
     // set some up so the guard renders AppShell rather than immediately redirecting to /login.
-    setTokens({ accessToken: "a", refreshToken: "b" });
+    setStoredUserId("u1");
 
     render(
       <MemoryRouter>

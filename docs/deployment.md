@@ -195,6 +195,29 @@ deployed frontend's origin -- without it, the browser blocks every cross-origin 
 outright. Local dev defaults to `http://localhost:5173` (Vite's default port) with no env var
 needed.
 
+### Cookie-based auth (ERP-116) -- backend and frontend must deploy together
+
+`app/auth/`'s session mechanism moved from `Authorization: Bearer` headers (tokens stored in the
+frontend's `localStorage`, readable by any JS on the page -- an XSS exposure) to `httpOnly`
+cookies. This is a coordinated, breaking change across both halves of the deployment:
+
+- **The frontend now sends `credentials: "include"` and a `X-CSRF-Token` header on every
+  request** (`frontend/src/lib/apiClient.ts`) instead of an `Authorization` header sourced from
+  `localStorage`. An old frontend build talking to the new backend cannot authenticate at all
+  (nothing it sends matches what the backend now checks); a new frontend build talking to an old
+  backend fares no better. **Deploy the backend and the Vercel frontend together, not staggered.**
+- **Every existing logged-in user is signed out the moment the backend deploys** -- there is no
+  migration path for an already-issued `Authorization`-header-style session, by design (a clean
+  cutover was the deliberate choice, not an oversight -- see `ERP-116`). Expected, not a bug to
+  chase.
+- `CORS_ALLOWED_ORIGINS` must be the frontend's exact origin, never `*` -- `allow_credentials=True`
+  (required so the browser sends/receives the cookies cross-origin) and a wildcard origin are
+  mutually exclusive per the CORS spec; `CORSMiddleware` enforces this regardless of this app's
+  own config. Already correctly scoped on the live VM (`CORS_ALLOWED_ORIGINS=<vercel origin>`,
+  not `*`), so no VM-side config change was needed when this shipped.
+- `AUTH_COOKIE_SECURE` should stay unset (defaults to `true`) in production -- see
+  `.env.example`'s comment for what it controls and when `false` is appropriate (local dev only).
+
 ## Upload size ceiling (ERP-051)
 
 `INGESTION_MAX_UPLOAD_SIZE_BYTES` is set to 20MB (`app/ingestion/config.py`) -- previously 50MB,

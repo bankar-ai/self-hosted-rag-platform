@@ -9,6 +9,12 @@ os.environ.setdefault(
 # Set here, not just in tests/auth/conftest.py, so any test file can safely construct
 # AuthSettings regardless of pytest's (alphabetical) collection order.
 os.environ.setdefault("AUTH_JWT_SECRET_KEY", "test-only-secret-do-not-use-in-production")
+# ERP-116: most router test files' TestClient uses plain http://testserver (not https://), but
+# the access/refresh/csrf cookies default to Secure=True (production default) -- a Secure
+# cookie is never sent back over plain HTTP, even by httpx's test client, which faithfully
+# mirrors real browser behavior here. "false" switches to Secure=False/SameSite=Lax, the same
+# local-dev mode a plain http://localhost deployment would use.
+os.environ.setdefault("AUTH_COOKIE_SECURE", "false")
 # Dedicated test-only Redis logical DB for the rate limiter (ERP-108) -- shared here (not just
 # tests/core/conftest.py) since generation/retrieval router tests also need it.
 os.environ.setdefault("RATE_LIMIT_REDIS_URL", "redis://localhost:6379/3")

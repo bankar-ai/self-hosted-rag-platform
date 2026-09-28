@@ -10,6 +10,19 @@ from tests.auth_helpers import register_and_login
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cookie_jar():
+    """Clear the shared `client`'s cookie jar before/after each test (ERP-116).
+
+    Cookie-based auth is client-scoped, not request-scoped like the old Authorization header
+    was -- without this, a session left on `client` by one test could silently authenticate a
+    later test that never logged in itself.
+    """
+    client.cookies.clear()
+    yield
+    client.cookies.clear()
+
+
 @pytest.fixture
 def auth_headers():
     return register_and_login(client, "generation")
@@ -321,7 +334,10 @@ def test_query_returns_404_when_conversation_id_belongs_to_another_user(monkeypa
     )
 
     headers_a = register_and_login(client, "generation-owner-a")
-    headers_b = register_and_login(client, "generation-owner-b")
+    # ERP-116: cookie-based auth, not headers -- a second identity needs its own TestClient,
+    # since TestClient's cookie jar is client-scoped, not request-scoped.
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-owner-b")
 
     create_response = client.post(
         "/generation/query",
@@ -330,7 +346,7 @@ def test_query_returns_404_when_conversation_id_belongs_to_another_user(monkeypa
     )
     assert create_response.status_code == 200
 
-    response = client.post(
+    response = client_b.post(
         "/generation/query",
         json={"query": "what about the second one?", "conversation_id": conversation_id},
         headers=headers_b,
@@ -364,7 +380,8 @@ def test_get_conversation_returns_404_when_conversation_belongs_to_another_user(
     )
 
     headers_a = register_and_login(client, "generation-history-owner-a")
-    headers_b = register_and_login(client, "generation-history-owner-b")
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-history-owner-b")
 
     create_response = client.post(
         "/generation/query",
@@ -373,7 +390,7 @@ def test_get_conversation_returns_404_when_conversation_belongs_to_another_user(
     )
     assert create_response.status_code == 200
 
-    response = client.get(f"/conversations/{conversation_id}", headers=headers_b)
+    response = client_b.get(f"/conversations/{conversation_id}", headers=headers_b)
 
     assert response.status_code == 404
 
@@ -451,7 +468,8 @@ def test_list_conversations_does_not_include_another_users_conversations(monkeyp
     )
 
     headers_a = register_and_login(client, "generation-list-conversations-owner-a")
-    headers_b = register_and_login(client, "generation-list-conversations-owner-b")
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-list-conversations-owner-b")
 
     client.post(
         "/generation/query",
@@ -459,7 +477,7 @@ def test_list_conversations_does_not_include_another_users_conversations(monkeyp
         headers=headers_a,
     )
 
-    response = client.get("/conversations", headers=headers_b)
+    response = client_b.get("/conversations", headers=headers_b)
 
     assert response.status_code == 200
     assert response.json() == {"conversations": [], "has_more": False}
@@ -538,7 +556,8 @@ def test_rename_conversation_404_for_another_users_conversation(monkeypatch):
     )
 
     headers_a = register_and_login(client, "generation-rename-owner-a")
-    headers_b = register_and_login(client, "generation-rename-owner-b")
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-rename-owner-b")
     conversation_id = str(uuid.uuid4())
     client.post(
         "/generation/query",
@@ -546,7 +565,7 @@ def test_rename_conversation_404_for_another_users_conversation(monkeypatch):
         headers=headers_a,
     )
 
-    response = client.patch(
+    response = client_b.patch(
         f"/conversations/{conversation_id}", json={"title": "hijacked"}, headers=headers_b
     )
     assert response.status_code == 404
@@ -623,7 +642,8 @@ def test_delete_conversation_404_for_another_users_conversation(monkeypatch):
     )
 
     headers_a = register_and_login(client, "generation-delete-owner-a")
-    headers_b = register_and_login(client, "generation-delete-owner-b")
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-delete-owner-b")
     conversation_id = str(uuid.uuid4())
     client.post(
         "/generation/query",
@@ -631,7 +651,7 @@ def test_delete_conversation_404_for_another_users_conversation(monkeypatch):
         headers=headers_a,
     )
 
-    response = client.delete(f"/conversations/{conversation_id}", headers=headers_b)
+    response = client_b.delete(f"/conversations/{conversation_id}", headers=headers_b)
     assert response.status_code == 404
 
     # Confirm it wasn't actually deleted -- owner a can still see it.
@@ -753,17 +773,18 @@ def test_rename_conversation_does_not_conflict_across_different_owners(monkeypat
     )
 
     headers_a = register_and_login(client, "generation-rename-dup-owner-a")
-    headers_b = register_and_login(client, "generation-rename-dup-owner-b")
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-rename-dup-owner-b")
     conv_a, conv_b = str(uuid.uuid4()), str(uuid.uuid4())
     client.post(
         "/generation/query", json={"query": "a", "conversation_id": conv_a}, headers=headers_a
     )
-    client.post(
+    client_b.post(
         "/generation/query", json={"query": "b", "conversation_id": conv_b}, headers=headers_b
     )
     client.patch(f"/conversations/{conv_a}", json={"title": "Same Name"}, headers=headers_a)
 
-    response = client.patch(
+    response = client_b.patch(
         f"/conversations/{conv_b}", json={"title": "Same Name"}, headers=headers_b
     )
     assert response.status_code == 204
@@ -1065,12 +1086,13 @@ def test_set_message_feedback_404_for_another_users_message(monkeypatch):
     import uuid
 
     headers_a = register_and_login(client, "generation-feedback-owner-a")
-    headers_b = register_and_login(client, "generation-feedback-owner-b")
+    client_b = TestClient(app)
+    headers_b = register_and_login(client_b, "generation-feedback-owner-b")
     conversation_id = str(uuid.uuid4())
     query_response = _post_query_with_conversation(monkeypatch, headers_a, conversation_id)
     message_id = query_response.json()["assistant_message_id"]
 
-    response = client.put(
+    response = client_b.put(
         f"/conversations/messages/{message_id}/feedback",
         json={"rating": "up"},
         headers=headers_b,

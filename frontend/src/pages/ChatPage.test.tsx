@@ -2,16 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
-import { setTokens } from "../lib/tokenStorage";
+import { setStoredUserId } from "../lib/tokenStorage";
 import ChatPage from "./ChatPage";
-
-// See DocumentsPage.test.tsx for why a decodable fake JWT is needed (ChatPage reads `userId`
-// from the token's `sub` claim).
-function fakeToken(payload: Record<string, unknown>): string {
-  const base64url = (obj: Record<string, unknown>) =>
-    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `${base64url({ alg: "HS256" })}.${base64url(payload)}.fake-signature`;
-}
 
 function sseResponse(chunks: string[], delayMs = 0): Response {
   const encoder = new TextEncoder();
@@ -68,7 +60,7 @@ function stubChatFetch(
 describe("ChatPage", () => {
   beforeEach(() => {
     localStorage.clear();
-    setTokens({ accessToken: fakeToken({ sub: "u1", role: "user" }), refreshToken: "b" });
+    setStoredUserId("u1");
     // jsdom doesn't implement scrollIntoView (used by ChatPage's ERP-064 auto-scroll effect).
     Element.prototype.scrollIntoView = vi.fn();
   });

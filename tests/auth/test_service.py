@@ -91,6 +91,31 @@ def test_refresh_rejects_unknown_token(auth_settings):
         refresh_access_token("not-a-real-refresh-token", settings=auth_settings)
 
 
+def test_refresh_does_not_extend_the_session_past_its_original_expiry(auth_settings):
+    """ERP-116: rotation must not reset the session clock, or a used session never expires."""
+    from app.auth.repository import get_refresh_token_by_hash
+    from app.auth.security import hash_refresh_token
+    from app.core.db import get_session_factory
+
+    register_user("no-sliding-window@example.com", "a-long-enough-password")
+    tokens = login("no-sliding-window@example.com", "a-long-enough-password", settings=auth_settings)
+
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        original_record = get_refresh_token_by_hash(session, hash_refresh_token(tokens.refresh_token))
+        assert original_record is not None
+        original_expires_at = original_record.expires_at
+
+    new_tokens = refresh_access_token(tokens.refresh_token, settings=auth_settings)
+
+    with session_factory() as session:
+        rotated_record = get_refresh_token_by_hash(
+            session, hash_refresh_token(new_tokens.refresh_token)
+        )
+        assert rotated_record is not None
+        assert rotated_record.expires_at == original_expires_at
+
+
 def test_logout_revokes_token(auth_settings):
     register_user("logout-test@example.com", "a-long-enough-password")
     tokens = login("logout-test@example.com", "a-long-enough-password", settings=auth_settings)

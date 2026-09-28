@@ -88,21 +88,36 @@ def test_register_then_login_then_refresh_then_logout():
         json={"email": "router-test@example.com", "password": "a-long-enough-password"},
     )
     assert login_response.status_code == 200
-    tokens = login_response.json()
-    assert tokens["access_token"]
-    assert tokens["refresh_token"]
+    # ERP-116: no tokens in the body anymore -- httpOnly cookies (invisible to a real browser's
+    # JS, but readable here since this is the test's own local view of the response). Every
+    # mutating call below also needs the CSRF header, matching what a real browser's JS would
+    # read from the (deliberately non-httpOnly) csrf_token cookie and echo back.
+    assert "user_id" in login_response.json()
+    assert login_response.cookies.get("access_token")
+    old_refresh_token = login_response.cookies.get("refresh_token")
+    assert old_refresh_token
+    csrf_headers = {"X-CSRF-Token": client.cookies["csrf_token"]}
 
-    refresh_response = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    refresh_response = client.post("/auth/refresh", headers=csrf_headers)
     assert refresh_response.status_code == 200
-    new_tokens = refresh_response.json()
-    assert new_tokens["refresh_token"] != tokens["refresh_token"]
+    new_refresh_token = refresh_response.cookies.get("refresh_token")
+    assert new_refresh_token != old_refresh_token
+    # Refresh also rotates the CSRF cookie -- a real frontend always reads it fresh from
+    # `document.cookie` right before building each request rather than caching the old value,
+    # so this test does the same instead of reusing the pre-refresh header.
+    csrf_headers = {"X-CSRF-Token": client.cookies["csrf_token"]}
 
-    logout_response = client.post("/auth/logout", json={"refresh_token": new_tokens["refresh_token"]})
+    logout_response = client.post("/auth/logout", headers=csrf_headers)
     assert logout_response.status_code == 204
+    assert client.cookies.get("access_token") is None
+    assert client.cookies.get("refresh_token") is None
 
-    reuse_response = client.post(
-        "/auth/refresh", json={"refresh_token": new_tokens["refresh_token"]}
-    )
+    # The rotated (pre-logout) refresh token must be dead now, not just cleared client-side --
+    # set both cookies back manually (logout cleared both) to prove the *server* rejects the
+    # refresh token itself, not that this request is merely missing a cookie.
+    client.cookies.set("refresh_token", new_refresh_token)
+    client.cookies.set("csrf_token", csrf_headers["X-CSRF-Token"])
+    reuse_response = client.post("/auth/refresh", headers=csrf_headers)
     assert reuse_response.status_code == 401
 
 
@@ -111,13 +126,12 @@ def test_me_returns_the_authenticated_caller_profile():
         "/auth/register",
         json={"email": "me-router-test@example.com", "password": "a-long-enough-password"},
     )
-    login_response = client.post(
+    client.post(
         "/auth/login",
         json={"email": "me-router-test@example.com", "password": "a-long-enough-password"},
     )
-    access_token = login_response.json()["access_token"]
 
-    response = client.get("/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+    response = client.get("/auth/me")
 
     assert response.status_code == 200
     body = response.json()
@@ -142,10 +156,10 @@ def test_delete_me_removes_caller_and_their_owned_data_and_requires_no_user_id_p
     email = f"delete-me-router-{uuid.uuid4()}@example.com"
     password = "a-long-enough-password"
     client.post("/auth/register", json={"email": email, "password": password})
-    login_response = client.post("/auth/login", json={"email": email, "password": password})
-    tokens = login_response.json()
-    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-    user_id = uuid.UUID(client.get("/auth/me", headers=headers).json()["id"])
+    client.post("/auth/login", json={"email": email, "password": password})
+    csrf_headers = {"X-CSRF-Token": client.cookies["csrf_token"]}
+    old_refresh_token = client.cookies["refresh_token"]
+    user_id = uuid.UUID(client.get("/auth/me").json()["id"])
 
     # Give this user owned data across every table `delete_user_and_owned_data` must clean up --
     # mirrors test_admin.py's test_admin_can_delete_a_user_and_their_owned_data, just deleting via
@@ -173,13 +187,14 @@ def test_delete_me_removes_caller_and_their_owned_data_and_requires_no_user_id_p
         set_message_feedback(session, assistant_message.id, user_id, "up")
         session.commit()
 
-    response = client.delete("/auth/me", headers=headers)
+    response = client.delete("/auth/me", headers=csrf_headers)
     assert response.status_code == 204
 
     # Refresh tokens are cascade-deleted with the user, so the old refresh token must now fail --
     # even though the already-issued access token (stateless, not checked against the DB per
     # request) would still decode fine within its own unexpired lifetime.
-    refresh_response = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
+    client.cookies.set("refresh_token", old_refresh_token)
+    refresh_response = client.post("/auth/refresh", headers=csrf_headers)
     assert refresh_response.status_code == 401
 
 
@@ -207,8 +222,17 @@ def test_login_rejects_wrong_password():
     assert response.status_code == 401
 
 
+def test_refresh_rejects_when_no_refresh_token_cookie_present():
+    response = client.post("/auth/refresh")
+    assert response.status_code == 401
+
+
 def test_refresh_rejects_unknown_token():
-    response = client.post("/auth/refresh", json={"refresh_token": "not-a-real-token"})
+    # A matching CSRF cookie/header pair is set explicitly so this isolates testing the
+    # "unknown refresh token" behavior specifically, not incidentally tripping the CSRF check.
+    client.cookies.set("refresh_token", "not-a-real-token")
+    client.cookies.set("csrf_token", "test-csrf-token")
+    response = client.post("/auth/refresh", headers={"X-CSRF-Token": "test-csrf-token"})
     assert response.status_code == 401
 
 
@@ -251,14 +275,13 @@ def test_oidc_callback_full_round_trip_creates_user_and_issues_tokens(configured
     )
 
     assert callback_response.status_code == 200
-    tokens = callback_response.json()
-    assert tokens["access_token"]
-    assert tokens["refresh_token"]
+    assert "user_id" in callback_response.json()
+    assert callback_response.cookies.get("access_token")
+    assert callback_response.cookies.get("refresh_token")
 
-    # The issued access token works against a real protected endpoint, exactly like local login.
-    me_response = client.get(
-        "/admin/users", headers={"Authorization": f"Bearer {tokens['access_token']}"}
-    )
+    # The issued cookie works against a real protected endpoint, exactly like local login --
+    # no manual header needed, `client`'s cookie jar already carries it.
+    me_response = client.get("/admin/users")
     assert me_response.status_code == 403  # not an admin -- but 403, not 401, proves the token is valid
 
 

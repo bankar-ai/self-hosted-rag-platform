@@ -22,7 +22,12 @@ app = FastAPI(title="Self-Hosted RAG Platform")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_settings().allowed_origins_list,
-    allow_credentials=False,
+    # ERP-116: required so the browser sends/receives the httpOnly auth cookies cross-origin
+    # (the frontend on Vercel and this API are different origins). Safe specifically because
+    # `allow_origins` is never "*" (see CorsSettings' docstring) -- the CORS spec forbids
+    # combining allow_credentials=True with a wildcard origin, and this middleware enforces
+    # that at the browser level regardless of this app's own config.
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

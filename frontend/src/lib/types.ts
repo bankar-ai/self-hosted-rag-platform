@@ -1,7 +1,7 @@
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: "bearer";
+/** ERP-116: what /auth/login, /auth/register (via login), and /auth/refresh return now --
+ * the tokens themselves are httpOnly cookies, never in this body. */
+export interface AuthActionResponse {
+  user_id: string;
 }
 
 export interface UserResponse {
