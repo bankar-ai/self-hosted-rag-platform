@@ -10,6 +10,7 @@ import ollama
 
 from app.core.telemetry import get_meter, get_tracer
 from app.generation.config import GenerationSettings
+from app.generation.tracing import trace_generation
 
 logger = logging.getLogger(__name__)
 
@@ -55,17 +56,28 @@ class OllamaLLMClient:
         with get_tracer().start_as_current_span("llm.generate") as span:
             span.set_attribute("llm.model", self._model)
             start = time.monotonic()
-            response = self._client.chat(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                options={"temperature": self._temperature},
-                think=False,
-            )
+            with trace_generation(
+                model=self._model, system_prompt=system_prompt, user_prompt=user_prompt
+            ) as generation:
+                response = self._client.chat(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    options={"temperature": self._temperature},
+                    think=False,
+                )
+                text = response.message.content or ""
+                usage_details = None
+                if response.prompt_eval_count is not None and response.eval_count is not None:
+                    usage_details = {
+                        "input": response.prompt_eval_count,
+                        "output": response.eval_count,
+                    }
+                generation.update(output=text, usage_details=usage_details)
             _duration_histogram.record(time.monotonic() - start, {"model": self._model})
-            return response.message.content or ""
+            return text
 
     def ping(self) -> None:
         """Touch the Ollama server without generating anything (ERP-091).
@@ -79,20 +91,26 @@ class OllamaLLMClient:
 
     def generate_stream(self, system_prompt: str, user_prompt: str) -> Iterator[str]:
         """Stream `system_prompt`/`user_prompt` to Ollama, yielding response text chunks in order."""
-        stream = self._client.chat(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            options={"temperature": self._temperature},
-            think=False,
-            stream=True,
-        )
-        for chunk in stream:
-            content = chunk.message.content
-            if content:
-                yield content
+        with trace_generation(
+            model=self._model, system_prompt=system_prompt, user_prompt=user_prompt
+        ) as generation:
+            stream = self._client.chat(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                options={"temperature": self._temperature},
+                think=False,
+                stream=True,
+            )
+            chunks: list[str] = []
+            for chunk in stream:
+                content = chunk.message.content
+                if content:
+                    chunks.append(content)
+                    yield content
+            generation.update(output="".join(chunks), usage_details=None)
 
 
 class OpenRouterLLMClient:
@@ -129,18 +147,30 @@ class OpenRouterLLMClient:
         with get_tracer().start_as_current_span("llm.generate") as span:
             span.set_attribute("llm.model", self._model)
             start = time.monotonic()
-            response = self._client.post(
-                "/chat/completions",
-                json={
-                    "model": self._model,
-                    "messages": self._messages(system_prompt, user_prompt),
-                    "temperature": self._temperature,
-                },
-            )
-            response.raise_for_status()
+            with trace_generation(
+                model=self._model, system_prompt=system_prompt, user_prompt=user_prompt
+            ) as generation:
+                response = self._client.post(
+                    "/chat/completions",
+                    json={
+                        "model": self._model,
+                        "messages": self._messages(system_prompt, user_prompt),
+                        "temperature": self._temperature,
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+                text = body["choices"][0]["message"]["content"] or ""
+                usage = body.get("usage")
+                usage_details = None
+                if usage and "prompt_tokens" in usage and "completion_tokens" in usage:
+                    usage_details = {
+                        "input": usage["prompt_tokens"],
+                        "output": usage["completion_tokens"],
+                    }
+                generation.update(output=text, usage_details=usage_details)
             _duration_histogram.record(time.monotonic() - start, {"model": self._model})
-            body = response.json()
-            return body["choices"][0]["message"]["content"] or ""
+            return text
 
     def ping(self) -> None:
         """No-op -- OpenRouter has no scale-to-zero cold start to hide (ERP-106)."""
@@ -152,17 +182,23 @@ class OpenRouterLLMClient:
         literal `data: [DONE]`) -- no extra dependency needed, `httpx`'s own line iteration is
         enough for this simple a format.
         """
-        with self._client.stream(
-            "POST",
-            "/chat/completions",
-            json={
-                "model": self._model,
-                "messages": self._messages(system_prompt, user_prompt),
-                "temperature": self._temperature,
-                "stream": True,
-            },
-        ) as response:
+        with (
+            trace_generation(
+                model=self._model, system_prompt=system_prompt, user_prompt=user_prompt
+            ) as generation,
+            self._client.stream(
+                "POST",
+                "/chat/completions",
+                json={
+                    "model": self._model,
+                    "messages": self._messages(system_prompt, user_prompt),
+                    "temperature": self._temperature,
+                    "stream": True,
+                },
+            ) as response,
+        ):
             response.raise_for_status()
+            chunks: list[str] = []
             for line in response.iter_lines():
                 if not line.startswith("data: "):
                     continue
@@ -171,7 +207,9 @@ class OpenRouterLLMClient:
                     break
                 delta = json.loads(data)["choices"][0]["delta"].get("content")
                 if delta:
+                    chunks.append(delta)
                     yield delta
+            generation.update(output="".join(chunks), usage_details=None)
 
 
 def get_default_llm_client(settings: GenerationSettings) -> "LLMClient":

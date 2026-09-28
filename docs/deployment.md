@@ -116,6 +116,32 @@ auto-instrumented ones now reach Grafana Cloud without needing a local Prometheu
 **Prometheus/Mimir** datasource, query by metric name (e.g. `llm_generation_duration_seconds`) or
 filter by `service_name="self-hosted-rag-platform"`.
 
+## LLM tracing (Langfuse Cloud, ERP-112)
+
+The traces/logs/metrics above (ERP-028/038/039/042) cover the whole app but have no LLM-specific
+detail -- no browsable per-call prompt/response, no token usage. Langfuse Cloud (free Hobby tier)
+fills that gap, complementary to (not a replacement for) the existing OTel+Grafana Cloud stack.
+
+`app/generation/tracing.py`'s `trace_generation()` wraps every `OllamaLLMClient`/
+`OpenRouterLLMClient` `generate`/`generate_stream` call, nested inside the existing `llm.generate`
+OTel span rather than replacing it -- Langfuse's SDK (v4, OTel-native) attaches its own span
+processor to the same global `TracerProvider` `app/core/telemetry.py` already configures, so a
+Langfuse "generation" observation shows up as a child of that span, not a second disconnected
+trace. Captures the system+user prompt, model, response text, and token usage where the provider
+surfaces it (Ollama's `prompt_eval_count`/`eval_count`; OpenRouter's `usage` block) -- non-streaming
+calls only; streaming responses are traced for prompt/output but not token usage, a known gap.
+
+Purely additive and never load-bearing, same philosophy as this repo's Redis caches (ADR-003): if
+`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` aren't set, or the SDK fails to initialize, every call
+becomes a no-op -- nothing else in the request path changes or fails.
+
+**To look at live traces**: [cloud.langfuse.com](https://cloud.langfuse.com) -> the
+`self-hosted-rag-platform` project -> **Tracing**. Each trace shows the full prompt/response pair,
+model, and token counts (when captured) for one `/generation/query` call.
+
+**Scope note**: covers live `/generation/query` traffic only. The offline `app/evaluation/`
+retrieval/generation-quality runs (ERP-029/030) are not wrapped -- left as a possible follow-up.
+
 ## Frontend (Vercel)
 
 ERP-043 adds a Vite + React SPA (`frontend/`) deployed separately to Vercel, calling this
