@@ -116,6 +116,75 @@ auto-instrumented ones now reach Grafana Cloud without needing a local Prometheu
 **Prometheus/Mimir** datasource, query by metric name (e.g. `llm_generation_duration_seconds`) or
 filter by `service_name="self-hosted-rag-platform"`.
 
+## LLM tracing (Langfuse Cloud, ERP-112)
+
+The traces/logs/metrics above (ERP-028/038/039/042) cover the whole app but have no LLM-specific
+detail -- no browsable per-call prompt/response, no token usage. Langfuse Cloud (free Hobby tier)
+fills that gap, complementary to (not a replacement for) the existing OTel+Grafana Cloud stack.
+
+`app/generation/tracing.py`'s `trace_generation()` wraps every `OllamaLLMClient`/
+`OpenRouterLLMClient` `generate`/`generate_stream` call, nested inside the existing `llm.generate`
+OTel span rather than replacing it -- Langfuse's SDK (v4, OTel-native) attaches its own span
+processor to the same global `TracerProvider` `app/core/telemetry.py` already configures, so a
+Langfuse "generation" observation shows up as a child of that span, not a second disconnected
+trace. Captures the system+user prompt, model, response text, and token usage where the provider
+surfaces it (Ollama's `prompt_eval_count`/`eval_count`; OpenRouter's `usage` block) -- non-streaming
+calls only; streaming responses are traced for prompt/output but not token usage, a known gap.
+
+Purely additive and never load-bearing, same philosophy as this repo's Redis caches (ADR-003): if
+`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` aren't set, or the SDK fails to initialize, every call
+becomes a no-op -- nothing else in the request path changes or fails.
+
+**To look at live traces**: [cloud.langfuse.com](https://cloud.langfuse.com) -> the
+`self-hosted-rag-platform` project -> **Tracing**. Each trace shows the full prompt/response pair,
+model, and token counts (when captured) for one `/generation/query` call.
+
+**Scope note**: covers live `/generation/query` traffic only. The offline `app/evaluation/`
+retrieval/generation-quality runs (ERP-029/030) are not wrapped -- left as a possible follow-up.
+
+### Automated scoring (Langfuse Evaluators, added 2026-09-28)
+
+Every trace above also gets an automated grounding/hallucination score, configured entirely in
+the Langfuse UI -- no code in this repo. Recorded here since it's config that lives only in
+Langfuse's project settings, not in git, and would otherwise be invisible to anyone reading this
+repo.
+
+**LLM Connection** (Project Settings -> LLM Connections): provider name `modal-ollama`, adapter
+`openai` (Ollama's OpenAI-compatible endpoint), base URL
+`https://pankajkumar-bankar--self-hosted-rag-platform-ollama-olla-6f6aea.modal.run/v1`, custom
+model `gemma3:4b`. Deliberately **not** OpenRouter or a hosted provider -- this reuses the same
+free, already-deployed Modal Ollama endpoint `GENERATION_OLLAMA_HOST`/`EMBEDDING_OLLAMA_HOST`
+already point at (ERP-037), so judge calls cost nothing beyond existing Modal compute. Important
+gotcha: Langfuse Cloud's Evaluators run on Langfuse's own servers, not locally -- a `localhost`
+Ollama endpoint is unreachable from there; the endpoint must be public, which Modal's already is.
+
+**Evaluator** ("Evaluators" -> New Evaluator): name `response-quality`, type LLM-as-a-judge,
+using the `modal-ollama`/`gemma3:4b` connection above. Prompt:
+
+```
+Evaluate whether the response is factually grounded in the input and free of hallucination or
+fabricated claims. Return 1 if fully grounded, 0 if it contains unsupported claims.
+
+Input: {{input}}
+Response: {{output}}
+```
+
+Score: a number between 0 and 1. Variables auto-mapped (`{{input}}` -> observation input,
+`{{output}}` -> observation output). Rule: reuses the evaluator's own sample filter
+(`isRootObservation:true`, i.e. root generation observations only), **100% sampling** (not
+throttled -- current traffic is low enough, per `current-state.md`'s 5-20 sporadic test users,
+that full coverage costs nothing meaningful against the Hobby tier's 50k units/month; revisit if
+volume grows), past observations backfilled once at setup time.
+
+Cold-start note: since the judge calls the same scale-to-zero Modal endpoint generation uses, a
+score can take 50-100s to appear if the container had gone idle. This is a non-issue in practice
+-- scoring is asynchronous background work with nobody waiting on it, unlike a live user request
+(which is why `ERP-091`'s `ping()` warmup trick exists for generation but nothing equivalent was
+needed here).
+
+**To look at scores**: same Langfuse project -> **Tracing**, `Scores` column on each trace row; or
+**Scores** in the left nav for a dedicated list/filter view.
+
 ## Frontend (Vercel)
 
 ERP-043 adds a Vite + React SPA (`frontend/`) deployed separately to Vercel, calling this
