@@ -28,6 +28,9 @@ from app.generation.repository import (
     title_exists_for_owner,
 )
 from app.generation.repository import (
+    delete_conversation as repository_delete_conversation,
+)
+from app.generation.repository import (
     rename_conversation as repository_rename_conversation,
 )
 from app.generation.rewrite import rewrite_query
@@ -518,6 +521,20 @@ def get_conversation_history(
         for record in records
     ]
     return ConversationHistoryResponse(conversation_id=conversation_id, messages=messages)
+
+
+def delete_conversation(conversation_id: uuid.UUID, owner_id: uuid.UUID) -> bool:
+    """Delete `conversation_id` and all its messages/feedback/sample-scores.
+
+    Returns `False` if the conversation doesn't exist or isn't owned by `owner_id`; the router
+    maps this to a 404.
+    """
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        deleted = repository_delete_conversation(session, conversation_id, owner_id)
+        if deleted:
+            session.commit()
+    return deleted
 
 
 def list_conversations(owner_id: uuid.UUID, limit: int = 50, offset: int = 0) -> ConversationListResponse:

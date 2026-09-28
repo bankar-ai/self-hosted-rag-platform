@@ -4,6 +4,7 @@ from app.core.db import get_session_factory
 from app.generation.repository import (
     append_message,
     clear_message_feedback,
+    delete_conversation,
     get_all_messages,
     get_conversation,
     get_conversation_owner_id,
@@ -290,6 +291,96 @@ def test_get_first_user_messages_conversation_with_no_messages_is_absent():
 
     with session_factory() as session:
         assert get_first_user_messages(session, [conversation_id]) == {}
+
+
+def test_delete_conversation_removes_conversation_and_its_messages():
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        append_message(session, conversation_id, "user", "hello")
+        append_message(session, conversation_id, "assistant", "hi there")
+        session.commit()
+
+    with session_factory() as session:
+        deleted = delete_conversation(session, conversation_id, _TEST_OWNER_ID)
+        session.commit()
+        assert deleted is True
+
+    with session_factory() as session:
+        from app.generation.models import ConversationRecord
+
+        assert session.get(ConversationRecord, conversation_id) is None
+        assert get_all_messages(session, conversation_id) == []
+
+
+def test_delete_conversation_also_removes_feedback_and_sample_scores():
+    """A message with feedback or a production sample score must not FK-violate on delete."""
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        assistant_message = append_message(session, conversation_id, "assistant", "an answer")
+        set_message_feedback(session, assistant_message.id, _TEST_OWNER_ID, "up")
+
+        from app.evaluation.models import ProductionSampleScoreRecord
+
+        session.add(
+            ProductionSampleScoreRecord(
+                message_id=assistant_message.id,
+                conversation_id=conversation_id,
+                judge="test-judge",
+                query="a question",
+                faithfulness=1.0,
+            )
+        )
+        session.commit()
+
+    with session_factory() as session:
+        deleted = delete_conversation(session, conversation_id, _TEST_OWNER_ID)
+        session.commit()
+        assert deleted is True
+
+    with session_factory() as session:
+        from app.evaluation.models import ProductionSampleScoreRecord
+        from app.generation.models import MessageFeedbackRecord
+
+        assert session.get(MessageFeedbackRecord, assistant_message.id) is None
+        assert (
+            session.query(ProductionSampleScoreRecord)
+            .filter(ProductionSampleScoreRecord.conversation_id == conversation_id)
+            .first()
+            is None
+        )
+
+
+def test_delete_conversation_unknown_id_returns_false():
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        assert delete_conversation(session, uuid.uuid4(), _TEST_OWNER_ID) is False
+
+
+def test_delete_conversation_wrong_owner_returns_false_and_does_not_delete():
+    conversation_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        from app.auth.models import UserRecord
+
+        session.add(UserRecord(id=other_owner_id, email=f"{other_owner_id}@test", hashed_password="x"))
+        get_or_create_conversation(session, conversation_id, _TEST_OWNER_ID)
+        session.commit()
+
+    with session_factory() as session:
+        assert delete_conversation(session, conversation_id, other_owner_id) is False
+
+    with session_factory() as session:
+        from app.generation.models import ConversationRecord
+
+        assert session.get(ConversationRecord, conversation_id) is not None
 
 
 def test_rename_conversation_sets_title():

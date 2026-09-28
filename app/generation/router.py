@@ -23,6 +23,7 @@ from app.generation.service import (
     ConversationAccessDeniedError,
     ConversationTitleConflictError,
     clear_feedback,
+    delete_conversation,
     generate,
     generate_stream,
     get_conversation_history,
@@ -131,6 +132,15 @@ def get_conversation(
     if history is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return history
+
+
+@conversations_router.delete("/{conversation_id}", status_code=204)
+def delete_conversation_endpoint(
+    conversation_id: uuid.UUID, current_user: CurrentUser = Depends(get_current_user)
+) -> None:
+    """Delete a conversation and all its messages. 404 if unknown or not owned by the caller."""
+    if not delete_conversation(conversation_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
 
 @conversations_router.patch("/{conversation_id}", status_code=204)

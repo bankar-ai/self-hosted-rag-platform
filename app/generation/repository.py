@@ -3,9 +3,10 @@
 import uuid
 from typing import Any, Literal, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.evaluation.models import ProductionSampleScoreRecord
 from app.generation.models import (
     ConversationMessageRecord,
     ConversationRecord,
@@ -61,6 +62,39 @@ def rename_conversation(
     if conversation is None or conversation.owner_id != owner_id:
         return False
     conversation.title = title
+    return True
+
+
+def delete_conversation(session: Session, conversation_id: uuid.UUID, owner_id: uuid.UUID) -> bool:
+    """Delete `conversation_id` and everything under it if owned by `owner_id`. Does not commit.
+
+    Returns `False` (does nothing) if the conversation doesn't exist or belongs to a different
+    owner, matching this module's existing ownership-check convention. Deletion order mirrors
+    `app.auth.repository.delete_user_and_owned_data`'s cascading pattern -- `message_feedback`
+    and `production_sample_scores` both carry a plain (non-cascading) foreign key to
+    `conversation_messages.id`, so both must be cleared before the messages themselves, which
+    in turn must be cleared before the conversation row.
+    """
+    conversation = session.get(ConversationRecord, conversation_id)
+    if conversation is None or conversation.owner_id != owner_id:
+        return False
+
+    message_ids = list(
+        session.scalars(
+            select(ConversationMessageRecord.id).where(
+                ConversationMessageRecord.conversation_id == conversation_id
+            )
+        )
+    )
+    if message_ids:
+        session.execute(delete(MessageFeedbackRecord).where(MessageFeedbackRecord.message_id.in_(message_ids)))
+        session.execute(
+            delete(ProductionSampleScoreRecord).where(ProductionSampleScoreRecord.message_id.in_(message_ids))
+        )
+        session.execute(
+            delete(ConversationMessageRecord).where(ConversationMessageRecord.id.in_(message_ids))
+        )
+    session.delete(conversation)
     return True
 
 
