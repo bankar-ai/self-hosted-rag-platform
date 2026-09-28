@@ -115,6 +115,31 @@ Living summary of what exists in this repository right now. Update in place as s
   Verified throughout: backend ruff/mypy clean, full suite 599 passed (up from 578); frontend
   95 vitest tests passed (was 93), `tsc -b`/`oxlint`/`vite build` clean. Session log:
   `.ai/sessions/2026-09-27-erp103-107-108-109-batch.md`.
+- **ERP-110 (select-all checkbox redesign, conversation delete) and ERP-111 (live OpenRouter
+  outage) both Done (2026-09-28)**: live UX feedback led to two shipped fixes and one
+  production incident response. `Sidebar.tsx`'s "Select all"/"Deselect all" text buttons replaced with a single
+  tri-state checkbox (checked/unchecked/indeterminate) that honestly reflects the underlying
+  selection. New `DELETE /conversations/{id}` (backend + a sidebar delete button) — the app
+  previously had no way to delete a conversation at all (only rename/feedback existed).
+  Building that cascade surfaced and fixed a real latent bug: `app.auth.repository.
+  delete_user_and_owned_data` never cleaned up `production_sample_scores` rows before deleting
+  their parent `conversation_messages` (added after ERP-097 shipped, never retrofitted) — any
+  user with a production-sampled message would have FK-violated on account deletion. Shipped
+  via PR #80 -> `develop`, PR #81 -> `main` (no migration in this range). **Separately, found
+  and fixed a live production outage**: the VM's `.env` had `GENERATION_PROVIDER=openrouter`
+  live (prepared by another session ahead of ERP-106's payment actually settling — the
+  OpenRouter account was still at $0.00 balance), so every real generation call was failing
+  `402 Payment Required`, surfacing to users as a generic 503. Reverted (commented out, not
+  deleted — one line + a restart to re-enable once the payment clears) and live-verified a
+  real generation call succeeds again through Modal/Ollama. **`deploy_vm.bat` root-caused and
+  rebuilt**: its two-step `scp`-then-`ssh` shape was silently unreliable in this environment —
+  `pscp`'s own carriage-return progress bar corrupts captured output for anything after it,
+  and piping a script over stdin separately corrupts the content in the plink/gcloud chain.
+  Rebuilt as a single inlined `gcloud compute ssh --command="..."` call (the one shape proven
+  reliable all session), live-tested successfully. Verified: backend full suite 606 passed
+  (was 599), frontend 97 vitest tests passed (was 95), ruff/mypy/tsc/oxlint/vite build all
+  clean. Session log:
+  `.ai/sessions/2026-09-28-select-all-redesign-conversation-delete-and-live-outage.md`.
 
 ## Next Planned Work
 
