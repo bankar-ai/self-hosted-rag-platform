@@ -167,6 +167,19 @@ Living summary of what exists in this repository right now. Update in place as s
   prompt, sampling rationale) documented in `docs/deployment.md`'s new "Automated scoring
   (Langfuse Evaluators)" subsection since it lives only in Langfuse's project settings, not git.
   Session log: `.ai/sessions/2026-09-28-langfuse-tracing-and-evaluation.md`.
+- **ERP-111's OpenRouter outage resolved for real, not just reverted (2026-09-28, same
+  session)**: the user funded the OpenRouter account with $5 pay-as-you-go credit (it had been
+  at $0.00 since the incident). Re-verified locally first, then re-enabled
+  `GENERATION_PROVIDER=openrouter` on the live VM (restored the exact
+  `#GENERATION_PROVIDER_REVERTED` marker line to its real value, `restart_app.bat`) and
+  live-verified end-to-end against the real public endpoint: a fresh test user, a real ingested
+  PDF, and `POST /generation/query` returned a correctly grounded, cited answer through
+  OpenRouter — not just a service-restarted check. Both throwaway verification users deleted
+  afterward via the `ERP-040` admin endpoint. Config-only change, no PR (no code touched — same
+  `OpenRouterLLMClient` from `ERP-106`). Full details, including the new
+  `C:\Users\Pankaj\scripts\restart_app.bat` reusable script (config-only restarts, no code pull,
+  alongside the existing `deploy_vm.bat`), in
+  `D:\github-projects\gcp-deployment-tracker.md`'s new "Generation provider" section.
 
 ## Next Planned Work
 

@@ -77,11 +77,21 @@ None.
 
 ## Next Steps
 
-- OpenRouter's $5 pay-as-you-go credit is now live on the account that was blocked at $0.00
-  during `ERP-111`'s incident (same session, reported by the user just as this session was
-  wrapping up) — next immediate task is re-verifying `GENERATION_PROVIDER=openrouter` actually
-  works end-to-end now that the account is funded, both locally and (once confirmed) re-enabling
-  it on the live VM (currently reverted to `ollama` since `ERP-111`).
+- ~~Re-verify `GENERATION_PROVIDER=openrouter` now that OpenRouter's $5 credit is live~~ **Done,
+  same session.** Verified locally first (`get_default_llm_client()` resolved to
+  `OpenRouterLLMClient`, a real call succeeded — `144` for `12*12`, no `402`). Then re-enabled on
+  the live VM: restored `~/app/.env`'s `GENERATION_PROVIDER=openrouter` (had been neutralized to
+  `#GENERATION_PROVIDER_REVERTED` since `ERP-111`) and restarted `rag-platform.service` — the
+  `sudo`-level SSH command was blocked by Claude Code's auto-mode classifier, so the user ran it
+  directly (same pattern as prior `gh api`/`gh pr merge` blocks). Live-verified end-to-end
+  against the real public endpoint, not just a service-active check: a fresh test user, a real
+  PDF ingested ("The Eiffel Tower is located in Paris, France..."), and
+  `POST /generation/query` returned a correctly grounded, cited answer through OpenRouter —
+  same verification phrase `ERP-037`'s original live check used. Both throwaway test
+  users deleted afterward via the `ERP-040` admin endpoint (`204` both). New reusable script
+  `C:\Users\Pankaj\scripts\restart_app.bat` added alongside the existing `deploy_vm.bat`, for a
+  restart-only path (config change, no code pull) — documented in
+  `D:\github-projects\gcp-deployment-tracker.md`.
 - Possible follow-ups, not yet tickets: wrap `app/evaluation/` (ERP-029/030) offline runs in
   Langfuse too; add streaming token-usage capture (needs provider-specific `stream_options`);
   cross-project OpenRouter API key separation once the Agentic AI repo exists (per the
