@@ -193,6 +193,25 @@ Living summary of what exists in this repository right now. Update in place as s
   live traffic (Modal/Ollama and OpenRouter) now get full Langfuse visibility, and the
   `response-quality` Evaluator now scores real production traffic too. Throwaway verification
   user deleted afterward via the `ERP-040` admin endpoint (`204`).
+- **ERP-113 and ERP-114 Done (2026-09-28, same session)**: real-user live traffic (a genuine
+  "what is scaffolds" question, not a synthetic test) surfaced two issues, found by reading the
+  actual Grafana Tempo span breakdown of that one request rather than guessing. **ERP-113**:
+  every live request was silently hitting a `redis.exceptions.ConnectionError` trying to reach
+  rate-limiting Redis at `localhost:6379` — `RATE_LIMIT_REDIS_URL` had never been added to
+  `~/app/.env` (the other three Redis-backed settings were; this one was missed when `ERP-108`
+  shipped), so the rate limiter had silently never been enforced in production, just failing
+  open every time. Fixed by adding the missing var (same Upstash instance) and restarting;
+  live-verified via `journalctl` that the exact same request shape now logs zero errors.
+  **ERP-114**: the same trace showed `embedding.generate` alone took ~39.8s of an 81.5s total —
+  a Modal cold start, and a predictable-in-hindsight side effect of `ERP-106`: that Modal app
+  used to be kept warm by both generation and embedding traffic, now only by embedding, so it
+  idles out faster. This is also what the frontend's "waking up the model" message was
+  correctly describing, not stale copy. Fix: raised `deploy/modal_ollama.py`'s
+  `scaledown_window` 300s -> 900s (a bounded, reversible experiment — true 24/7 `min_containers=1`
+  was costed out and rejected: T4 is ~$0.59/hr, so it would exhaust the $30/mo Modal free credit
+  in ~27 hours). Redeployed cleanly, same endpoint URL. Both fixes config/infra-only, no PR —
+  `deploy/modal_ollama.py`'s one-line change (plus an explanatory doc comment) is the only
+  tracked-code diff, on branch `erp113-114-live-fixes`.
 
 ## Next Planned Work
 
