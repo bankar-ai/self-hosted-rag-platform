@@ -7,6 +7,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.auth.models import OidcIdentityRecord, RefreshTokenRecord, UserRecord
+from app.evaluation.models import ProductionSampleScoreRecord
 from app.generation.models import (
     ConversationMessageRecord,
     ConversationRecord,
@@ -124,6 +125,16 @@ def delete_user_and_owned_data(session: Session, user_id: uuid.UUID) -> None:
         if message_ids:
             session.execute(
                 delete(MessageFeedbackRecord).where(MessageFeedbackRecord.message_id.in_(message_ids))
+            )
+            # ERP-097 added `production_sample_scores.message_id` as another plain (non-cascading)
+            # FK to conversation_messages.id after this function was first written -- without this,
+            # deleting a user with any production-sampled message would hit the same FK-violation
+            # class of bug ERP-066 found for message_feedback (found while adding the matching
+            # single-conversation delete_conversation, which needed this cleanup too).
+            session.execute(
+                delete(ProductionSampleScoreRecord).where(
+                    ProductionSampleScoreRecord.message_id.in_(message_ids)
+                )
             )
         session.execute(
             delete(ConversationMessageRecord).where(
