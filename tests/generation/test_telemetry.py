@@ -14,6 +14,8 @@ class _StubMessage:
 
 class _StubResponse:
     message = _StubMessage()
+    prompt_eval_count = None
+    eval_count = None
 
 
 class _StubOllama:

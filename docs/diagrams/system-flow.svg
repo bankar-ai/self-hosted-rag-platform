@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 580" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="1200" height="580" rx="20" fill="#f7f8fb"></rect>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon points="0,0 10,5 0,10" fill="#0f9d8f"></polygon>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <polygon points="0,0 10,5 0,10" fill="#8891a6"></polygon>
+    </marker>
+  </defs>
+
+  <!-- Client -->
+  <text x="600" y="16" font-size="11" letter-spacing="1.2" text-anchor="middle" fill="#5b6478">CLIENT</text>
+  <rect x="350" y="24" width="500" height="56" rx="8" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+  <text x="600" y="58" font-size="15" font-weight="700" text-anchor="middle" fill="#161c2b">React Frontend</text>
+
+  <!-- Client -> API -->
+  <line x1="600" y1="80" x2="600" y2="126" stroke="#0f9d8f" stroke-width="2" marker-end="url(#arrow)"></line>
+  <text x="614" y="107" font-size="11" fill="#5b6478">REST + SSE</text>
+
+  <!-- API container -->
+  <rect x="150" y="130" width="750" height="190" rx="12" fill="#ffffff" stroke="#0f9d8f" stroke-width="1.75"></rect>
+  <text x="172" y="150" font-size="11" letter-spacing="1.2" fill="#5b6478">FASTAPI — app/</text>
+
+  <!-- five module chips -->
+  <g>
+    <rect x="170" y="166" width="126" height="58" rx="7" fill="#eef0f6" stroke="#d8dce6" stroke-width="1.25"></rect>
+    <text x="233" y="190" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Auth</text>
+    <text x="233" y="207" font-size="9.5" text-anchor="middle" fill="#5b6478">JWT · RBAC</text>
+  </g>
+  <g>
+    <rect x="316" y="166" width="126" height="58" rx="7" fill="#eef0f6" stroke="#d8dce6" stroke-width="1.25"></rect>
+    <text x="379" y="190" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Ingestion</text>
+    <text x="379" y="207" font-size="9.5" text-anchor="middle" fill="#5b6478">parse · chunk</text>
+  </g>
+  <g>
+    <rect x="462" y="166" width="126" height="58" rx="7" fill="#eef0f6" stroke="#d8dce6" stroke-width="1.25"></rect>
+    <text x="525" y="190" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Retrieval</text>
+    <text x="525" y="207" font-size="9.5" text-anchor="middle" fill="#5b6478">hybrid + rerank</text>
+  </g>
+  <g>
+    <rect x="608" y="166" width="126" height="58" rx="7" fill="#eef0f6" stroke="#d8dce6" stroke-width="1.25"></rect>
+    <text x="671" y="190" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Generation</text>
+    <text x="671" y="207" font-size="9.5" text-anchor="middle" fill="#5b6478">cited answers</text>
+  </g>
+  <g>
+    <rect x="754" y="166" width="126" height="58" rx="7" fill="#eef0f6" stroke="#d8dce6" stroke-width="1.25"></rect>
+    <text x="817" y="190" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Evaluation</text>
+    <text x="817" y="207" font-size="9.5" text-anchor="middle" fill="#5b6478">quality scoring</text>
+  </g>
+
+  <!-- generation -> retrieval internal call -->
+  <path d="M 671 166 C 671 150, 525 150, 525 166" stroke="#8891a6" stroke-width="1.5" fill="none" stroke-dasharray="3 4" marker-end="url(#arrow-muted)"></path>
+  <text x="598" y="146" font-size="9.5" text-anchor="middle" fill="#5b6478">calls search()</text>
+
+  <!-- shared core strip -->
+  <rect x="170" y="244" width="710" height="36" rx="6" fill="#0f9d8f1a" stroke="#0f9d8f" stroke-width="1" stroke-dasharray="2 3"></rect>
+  <text x="525" y="266" font-size="10.5" text-anchor="middle" fill="#5b6478">shared core — db sessions · redis clients · telemetry · rate limiting</text>
+
+  <!-- API -> data/inference bus -->
+  <line x1="525" y1="320" x2="525" y2="350" stroke="#0f9d8f" stroke-width="2"></line>
+  <text x="539" y="339" font-size="11" fill="#5b6478">reads / writes</text>
+  <line x1="235" y1="350" x2="814" y2="350" stroke="#0f9d8f" stroke-width="2"></line>
+  <line x1="235" y1="350" x2="235" y2="392" stroke="#0f9d8f" stroke-width="2" marker-end="url(#arrow)"></line>
+  <line x1="428" y1="350" x2="428" y2="392" stroke="#0f9d8f" stroke-width="2" marker-end="url(#arrow)"></line>
+  <line x1="621" y1="350" x2="621" y2="392" stroke="#0f9d8f" stroke-width="2" marker-end="url(#arrow)"></line>
+  <line x1="814" y1="350" x2="814" y2="392" stroke="#0f9d8f" stroke-width="2" marker-end="url(#arrow)"></line>
+
+  <!-- data + inference row -->
+  <text x="525" y="384" font-size="11" letter-spacing="1.2" text-anchor="middle" fill="#5b6478">DATA &amp; INFERENCE</text>
+  <g>
+    <rect x="150" y="392" width="170" height="74" rx="8" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+    <text x="235" y="420" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Postgres</text>
+    <text x="235" y="437" font-size="9.5" text-anchor="middle" fill="#5b6478">docs · chunks · users</text>
+  </g>
+  <g>
+    <rect x="343" y="392" width="170" height="74" rx="8" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+    <text x="428" y="420" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">FAISS</text>
+    <text x="428" y="437" font-size="9.5" text-anchor="middle" fill="#5b6478">per-owner indexes</text>
+  </g>
+  <g>
+    <rect x="536" y="392" width="170" height="74" rx="8" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+    <text x="621" y="420" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Redis</text>
+    <text x="621" y="437" font-size="9.5" text-anchor="middle" fill="#5b6478">cache · rate limits</text>
+  </g>
+  <g>
+    <rect x="729" y="392" width="171" height="74" rx="8" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+    <text x="814" y="420" font-size="12" font-weight="700" text-anchor="middle" fill="#161c2b">Ollama / OpenRouter</text>
+    <text x="814" y="437" font-size="9.5" text-anchor="middle" fill="#5b6478">LLM + embeddings</text>
+  </g>
+
+  <!-- Observability sidecar -->
+  <line x1="900" y1="225" x2="958" y2="225" stroke="#8891a6" stroke-width="1.5" stroke-dasharray="3 4" marker-end="url(#arrow-muted)"></line>
+  <text x="906" y="216" font-size="10" fill="#5b6478">OTel</text>
+  <rect x="960" y="172" width="200" height="106" rx="10" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+  <text x="1060" y="212" font-size="13" font-weight="700" text-anchor="middle" fill="#161c2b">Grafana Cloud</text>
+  <text x="1060" y="230" font-size="9.5" text-anchor="middle" fill="#5b6478">traces · metrics</text>
+  <text x="1060" y="245" font-size="9.5" text-anchor="middle" fill="#5b6478">logs</text>
+
+  <!-- Legend -->
+  <line x1="150" y1="486" x2="1050" y2="486" stroke="#d8dce6" stroke-width="1"></line>
+  <text x="150" y="510" font-size="10" font-weight="700" letter-spacing="1" fill="#5b6478">LEGEND</text>
+
+  <g>
+    <line x1="150" y1="533" x2="182" y2="533" stroke="#0f9d8f" stroke-width="2.5"></line>
+    <text x="192" y="537" font-size="11" fill="#161c2b">Request / data flow</text>
+  </g>
+  <g>
+    <line x1="380" y1="533" x2="412" y2="533" stroke="#8891a6" stroke-width="2" stroke-dasharray="3 4"></line>
+    <text x="422" y="537" font-size="11" fill="#161c2b">Cross-cutting call (observability, module-to-module)</text>
+  </g>
+  <g>
+    <rect x="150" y="558" width="20" height="14" rx="3" fill="#eef0f6" stroke="#d8dce6" stroke-width="1.25"></rect>
+    <text x="182" y="569" font-size="11" fill="#161c2b">Feature module (inside FastAPI)</text>
+  </g>
+  <g>
+    <rect x="480" y="558" width="20" height="14" rx="3" fill="#ffffff" stroke="#d8dce6" stroke-width="1.5"></rect>
+    <text x="512" y="569" font-size="11" fill="#161c2b">Data store / external service</text>
+  </g>
+  <g>
+    <rect x="800" y="558" width="20" height="14" rx="3" fill="#0f9d8f1a" stroke="#0f9d8f" stroke-width="1" stroke-dasharray="2 3"></rect>
+    <text x="832" y="569" font-size="11" fill="#161c2b">Shared core (cross-module infra)</text>
+  </g>
+</svg>

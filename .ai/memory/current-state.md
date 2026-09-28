@@ -115,6 +115,71 @@ Living summary of what exists in this repository right now. Update in place as s
   Verified throughout: backend ruff/mypy clean, full suite 599 passed (up from 578); frontend
   95 vitest tests passed (was 93), `tsc -b`/`oxlint`/`vite build` clean. Session log:
   `.ai/sessions/2026-09-27-erp103-107-108-109-batch.md`.
+- **ERP-110 (select-all checkbox redesign, conversation delete) and ERP-111 (live OpenRouter
+  outage) both Done (2026-09-28)**: live UX feedback led to two shipped fixes and one
+  production incident response. `Sidebar.tsx`'s "Select all"/"Deselect all" text buttons replaced with a single
+  tri-state checkbox (checked/unchecked/indeterminate) that honestly reflects the underlying
+  selection. New `DELETE /conversations/{id}` (backend + a sidebar delete button) — the app
+  previously had no way to delete a conversation at all (only rename/feedback existed).
+  Building that cascade surfaced and fixed a real latent bug: `app.auth.repository.
+  delete_user_and_owned_data` never cleaned up `production_sample_scores` rows before deleting
+  their parent `conversation_messages` (added after ERP-097 shipped, never retrofitted) — any
+  user with a production-sampled message would have FK-violated on account deletion. Shipped
+  via PR #80 -> `develop`, PR #81 -> `main` (no migration in this range). **Separately, found
+  and fixed a live production outage**: the VM's `.env` had `GENERATION_PROVIDER=openrouter`
+  live (prepared by another session ahead of ERP-106's payment actually settling — the
+  OpenRouter account was still at $0.00 balance), so every real generation call was failing
+  `402 Payment Required`, surfacing to users as a generic 503. Reverted (commented out, not
+  deleted — one line + a restart to re-enable once the payment clears) and live-verified a
+  real generation call succeeds again through Modal/Ollama. **`deploy_vm.bat` root-caused and
+  rebuilt**: its two-step `scp`-then-`ssh` shape was silently unreliable in this environment —
+  `pscp`'s own carriage-return progress bar corrupts captured output for anything after it,
+  and piping a script over stdin separately corrupts the content in the plink/gcloud chain.
+  Rebuilt as a single inlined `gcloud compute ssh --command="..."` call (the one shape proven
+  reliable all session), live-tested successfully. Verified: backend full suite 606 passed
+  (was 599), frontend 97 vitest tests passed (was 95), ruff/mypy/tsc/oxlint/vite build all
+  clean. Session log:
+  `.ai/sessions/2026-09-28-select-all-redesign-conversation-delete-and-live-outage.md`.
+- **ERP-112 Done (2026-09-28)**: LLM-level tracing via Langfuse Cloud, complementary to the
+  existing OTel+Grafana Cloud stack (ERP-028/038/039/042), which has no per-call prompt/response/
+  token detail. New `app/generation/tracing.py`'s `trace_generation()` wraps
+  `OllamaLLMClient`/`OpenRouterLLMClient`'s `generate`/`generate_stream`, nested inside the
+  existing `llm.generate` OTel span — Langfuse's SDK (v4, OTel-native, not v3 as the ticket
+  originally assumed) attaches its own span processor to the same global `TracerProvider`, so the
+  Langfuse observation is a child of that span, not a second disconnected trace. Captures
+  prompt/model/output/latency always, token usage where the provider surfaces it (non-streaming
+  only — Ollama's `prompt_eval_count`/`eval_count`, OpenRouter's `usage` block). Purely additive
+  and never load-bearing (ADR-003 philosophy): a no-op with no `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY`
+  configured. Scoped to live `/generation/query` traffic only, per explicit agreement with the
+  user — the offline `app/evaluation/` (ERP-029/030) runs are not wrapped. Live-verified against
+  real Ollama, not just unit tests: a real `gemma3:4b` call confirmed to land in Langfuse via
+  their public API (`GET /api/public/v2/observations`), not just assumed from a green suite.
+  Verified: ruff/mypy clean, full suite 614 passed, 95.77% coverage (`tracing.py` itself 100%).
+  Langfuse Cloud account: Hobby (free) tier, US region, project `self-hosted-rag-platform`; keys
+  in `C:\Users\Pankaj\.credentials\self-hosted-rag-platform-credentials.md`, not yet added to the
+  live VM's `.env` (local dev/testing only until deployed). Merged to `develop` via PR #84.
+  **Same session, separately (Langfuse-UI-only config, no code/PR)**: an Evaluator
+  (`response-quality`, LLM-as-a-judge, 100% sampling) now auto-scores every trace for
+  grounding/hallucination, using a new Langfuse "LLM Connection" pointed at the *same* free,
+  already-deployed Modal Ollama endpoint generation uses (`gemma3:4b`) rather than a paid
+  provider — chosen specifically because Langfuse Cloud's Evaluators run server-side and cannot
+  reach a `localhost` Ollama instance, only a public endpoint. Full setup (connection details,
+  prompt, sampling rationale) documented in `docs/deployment.md`'s new "Automated scoring
+  (Langfuse Evaluators)" subsection since it lives only in Langfuse's project settings, not git.
+  Session log: `.ai/sessions/2026-09-28-langfuse-tracing-and-evaluation.md`.
+- **ERP-111's OpenRouter outage resolved for real, not just reverted (2026-09-28, same
+  session)**: the user funded the OpenRouter account with $5 pay-as-you-go credit (it had been
+  at $0.00 since the incident). Re-verified locally first, then re-enabled
+  `GENERATION_PROVIDER=openrouter` on the live VM (restored the exact
+  `#GENERATION_PROVIDER_REVERTED` marker line to its real value, `restart_app.bat`) and
+  live-verified end-to-end against the real public endpoint: a fresh test user, a real ingested
+  PDF, and `POST /generation/query` returned a correctly grounded, cited answer through
+  OpenRouter — not just a service-restarted check. Both throwaway verification users deleted
+  afterward via the `ERP-040` admin endpoint. Config-only change, no PR (no code touched — same
+  `OpenRouterLLMClient` from `ERP-106`). Full details, including the new
+  `C:\Users\Pankaj\scripts\restart_app.bat` reusable script (config-only restarts, no code pull,
+  alongside the existing `deploy_vm.bat`), in
+  `D:\github-projects\gcp-deployment-tracker.md`'s new "Generation provider" section.
 
 ## Next Planned Work
 
