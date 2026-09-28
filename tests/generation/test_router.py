@@ -793,11 +793,13 @@ def test_query_stream_returns_no_context_sse_when_retrieval_empty(auth_headers):
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["x-accel-buffering"] == "no"
     events = _parse_sse(response.text)
-    assert events == [
+    assert events[:2] == [
         ("token", {"text": NO_CONTEXT_ANSWER}),
         ("citations", {"citations": []}),
-        ("done", {"conversation_id": None}),
     ]
+    assert events[2][0] == "done"
+    assert events[2][1]["conversation_id"] is None
+    assert isinstance(events[2][1]["duration_seconds"], float)
 
 
 def test_query_stream_returns_citations_tokens_and_done(monkeypatch, auth_headers):
@@ -849,7 +851,9 @@ def test_query_stream_returns_citations_tokens_and_done(monkeypatch, auth_header
             ]
         },
     )
-    assert events[3] == ("done", {"conversation_id": None})
+    assert events[3][0] == "done"
+    assert events[3][1]["conversation_id"] is None
+    assert isinstance(events[3][1]["duration_seconds"], float)
 
 
 def test_query_stream_yields_error_event_on_llm_failure(monkeypatch, auth_headers):

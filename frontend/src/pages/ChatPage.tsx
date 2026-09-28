@@ -20,6 +20,9 @@ interface ChatMessage {
   content: string;
   citations?: Citation[];
   feedback?: "up" | "down" | null;
+  /** End-to-end generation time in seconds (ERP-115) -- undefined for a user/error message, a
+   * message still streaming, or one persisted before this field existed. */
+  durationSeconds?: number;
 }
 
 // ERP-081: SourcePanel pulls in react-markdown/rehype-raw/rehype-sanitize (ERP-067), which
@@ -311,6 +314,7 @@ export default function ChatPage() {
       content: message.content,
       feedback: message.feedback,
       citations: message.citations,
+      durationSeconds: message.duration_seconds ?? undefined,
     }));
     setMessages(loadedMessages);
 
@@ -353,6 +357,7 @@ export default function ChatPage() {
               content: message.content,
               feedback: message.feedback,
               citations: message.citations,
+              durationSeconds: message.duration_seconds ?? undefined,
             }))
           );
           setIsStreaming(false);
@@ -496,12 +501,20 @@ export default function ChatPage() {
             { role: "assistant", content: assistantText, citations },
           ]);
         } else if (sseEvent.event === "done") {
-          const assistantMessageId = (sseEvent.data as { assistant_message_id?: string })
-            .assistant_message_id;
-          if (assistantMessageId) {
+          const doneData = sseEvent.data as {
+            assistant_message_id?: string;
+            duration_seconds?: number;
+          };
+          if (doneData.assistant_message_id) {
             setMessages((prev) => [
               ...prev.slice(0, -1),
-              { role: "assistant", content: assistantText, citations, id: assistantMessageId },
+              {
+                role: "assistant",
+                content: assistantText,
+                citations,
+                id: doneData.assistant_message_id,
+                durationSeconds: doneData.duration_seconds,
+              },
             ]);
           }
           clearPendingAnswerMarker(conversationId);
@@ -684,6 +697,14 @@ export default function ChatPage() {
                             👎
                           </button>
                         </>
+                      )}
+                      {message.durationSeconds !== undefined && (
+                        <span
+                          className="ml-auto cursor-default rounded px-1.5 py-0.5 text-xs text-slate-300 hover:text-slate-500"
+                          title={`Generated in ${message.durationSeconds.toFixed(1)}s`}
+                        >
+                          ⏱
+                        </span>
                       )}
                     </div>
                   )}

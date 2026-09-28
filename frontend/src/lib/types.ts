@@ -118,6 +118,9 @@ export interface ConversationMessage {
    * used (ERP-107) -- `null` for a user-role message or one persisted before this field
    * existed. Not currently rendered anywhere in the UI. */
   retrieval_settings: Record<string, unknown> | null;
+  /** End-to-end wall-clock time this assistant turn took to generate, in seconds (ERP-115) --
+   * `null` for a user-role message or one persisted before this field existed. */
+  duration_seconds: number | null;
 }
 
 export interface ConversationHistoryResponse {

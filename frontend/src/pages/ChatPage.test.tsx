@@ -386,6 +386,30 @@ describe("ChatPage", () => {
     expect(screen.queryByText("[1] doc.pdf, p. 1")).not.toBeInTheDocument();
   });
 
+  it("shows generation duration as a hover tooltip once the answer completes (ERP-115)", async () => {
+    stubChatFetch(() =>
+      sseResponse([
+        'event: token\ndata: {"text": "answer"}\n\n',
+        'event: citations\ndata: {"citations": []}\n\n',
+        'event: done\ndata: {"conversation_id": "c1", "assistant_message_id": "m1", "duration_seconds": 3.456}\n\n',
+      ])
+    );
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    const input = await screen.findByPlaceholderText(/ask a question/i);
+    await userEvent.type(input, "What does the doc say?");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    // Hover-reveal (ERP-115) -- not an always-visible caption, a `title` tooltip that only
+    // shows on hover, so as not to draw attention to slow answers on a live demo.
+    expect(await screen.findByTitle("Generated in 3.5s")).toBeInTheDocument();
+  });
+
   describe("ERP-096: recovering an answer this browser never saw arrive live", () => {
     const CONVERSATION_ID = "c1";
 

@@ -34,7 +34,7 @@ def test_generation_response_round_trip():
         score=0.9,
         reranked=False,
     )
-    response = GenerationResponse(answer="the answer [1]", citations=[citation])
+    response = GenerationResponse(answer="the answer [1]", citations=[citation], duration_seconds=1.5)
 
     assert response.model_dump()["citations"][0]["chunk_id"] == "c1"
 
@@ -51,13 +51,15 @@ def test_generation_query_accepts_conversation_id():
 
 
 def test_generation_response_conversation_id_defaults_to_none():
-    response = GenerationResponse(answer="hi", citations=[])
+    response = GenerationResponse(answer="hi", citations=[], duration_seconds=1.5)
     assert response.conversation_id is None
 
 
 def test_generation_response_accepts_conversation_id():
     conversation_id = uuid.uuid4()
-    response = GenerationResponse(answer="hi", citations=[], conversation_id=conversation_id)
+    response = GenerationResponse(
+        answer="hi", citations=[], conversation_id=conversation_id, duration_seconds=1.5
+    )
     assert response.conversation_id == conversation_id
 
 
@@ -84,6 +86,7 @@ def test_message_round_trip():
         "feedback": None,
         "citations": [],
         "retrieval_settings": None,
+        "duration_seconds": None,
     }
 
 

@@ -334,6 +334,36 @@ def test_generate_persists_the_retrieval_settings_actually_used(monkeypatch):
     assert user_message.retrieval_settings is None
 
 
+def test_generate_persists_duration_seconds_and_it_round_trips_through_history(monkeypatch):
+    """ERP-115: end-to-end wall time is persisted on the assistant turn, not the user turn."""
+    conversation_id = uuid.uuid4()
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _ensure_test_owner(session)
+        session.commit()
+
+    monkeypatch.setattr("app.generation.service.retrieval_search", lambda *a, **k: [_chunk("c1")])
+    fake_llm = _FakeLLMClient("the answer [1]")
+
+    response = generate(
+        "what is X?",
+        top_k=5,
+        owner_id=_TEST_OWNER_ID,
+        conversation_id=conversation_id,
+        llm_client=fake_llm,
+    )
+
+    assert isinstance(response.duration_seconds, float)
+    assert response.duration_seconds >= 0
+
+    history = get_conversation_history(conversation_id, _TEST_OWNER_ID)
+    assert history is not None
+    assistant_message = next(m for m in history.messages if m.role == "assistant")
+    assert assistant_message.duration_seconds == response.duration_seconds
+    user_message = next(m for m in history.messages if m.role == "user")
+    assert user_message.duration_seconds is None
+
+
 def test_generate_first_turn_of_conversation_does_not_call_rewrite(monkeypatch):
     conversation_id = uuid.uuid4()
     session_factory = get_session_factory()
@@ -592,8 +622,9 @@ def test_generate_stream_stateless_yields_tokens_then_citations_then_done(monkey
                 ]
             },
         ),
-        ("done", {"conversation_id": None}),
+        ("done", {"conversation_id": None, "duration_seconds": events[-1][1]["duration_seconds"]}),
     ]
+    assert isinstance(events[-1][1]["duration_seconds"], float)
 
 
 def test_generate_stream_stateless_short_circuits_on_empty_retrieval(monkeypatch):
@@ -605,8 +636,9 @@ def test_generate_stream_stateless_short_circuits_on_empty_retrieval(monkeypatch
     assert events == [
         ("token", {"text": NO_CONTEXT_ANSWER}),
         ("citations", {"citations": []}),
-        ("done", {"conversation_id": None}),
+        ("done", {"conversation_id": None, "duration_seconds": events[-1][1]["duration_seconds"]}),
     ]
+    assert isinstance(events[-1][1]["duration_seconds"], float)
     assert fake_llm.stream_calls == []
 
 
@@ -622,8 +654,9 @@ def test_generate_stream_stateless_short_circuits_on_plain_greeting(monkeypatch)
     assert events == [
         ("token", {"text": GREETING_ANSWER}),
         ("citations", {"citations": []}),
-        ("done", {"conversation_id": None}),
+        ("done", {"conversation_id": None, "duration_seconds": events[-1][1]["duration_seconds"]}),
     ]
+    assert isinstance(events[-1][1]["duration_seconds"], float)
     assert fake_llm.stream_calls == []
 
 
