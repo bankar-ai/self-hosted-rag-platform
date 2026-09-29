@@ -1,16 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDLE_TIMEOUT_MS, recordActivity } from "./activityTracker";
 import { apiFetch, SESSION_EXPIRED_EVENT } from "./apiClient";
-import { getStoredUserId, setStoredUserId } from "./tokenStorage";
-
-function setCsrfCookie(value: string): void {
-  document.cookie = `csrf_token=${value}; path=/`;
-}
+import { getStoredCsrfToken, getStoredUserId, setStoredCsrfToken, setStoredUserId } from "./tokenStorage";
 
 describe("apiFetch", () => {
   beforeEach(() => {
     localStorage.clear();
-    document.cookie = "csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -28,8 +23,13 @@ describe("apiFetch", () => {
     expect(init.credentials).toBe("include");
   });
 
-  it("attaches the CSRF header (read from the non-httpOnly csrf_token cookie) on a mutating request", async () => {
-    setCsrfCookie("csrf-abc");
+  it("attaches the CSRF header (read from tokenStorage, not document.cookie) on a mutating request", async () => {
+    // ERP-116 hotfix (2026-09-29): the CSRF token is cached from the login/refresh response
+    // BODY, not read from its own cookie -- a real cross-origin browser's `document.cookie`
+    // can never see a cookie set by a different origin (the API), no matter what
+    // SameSite/credentials settings are used. See tokenStorage.ts's top comment for the full
+    // explanation of the bug this replaced.
+    setStoredCsrfToken("csrf-abc");
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
     mockFetch.mockResolvedValueOnce(new Response("{}", { status: 200 }));
 
@@ -40,7 +40,7 @@ describe("apiFetch", () => {
   });
 
   it("does not attach a CSRF header on a GET (nothing to forge)", async () => {
-    setCsrfCookie("csrf-abc");
+    setStoredCsrfToken("csrf-abc");
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
     mockFetch.mockResolvedValueOnce(new Response("{}", { status: 200 }));
 
@@ -63,17 +63,38 @@ describe("apiFetch", () => {
     expect(response.status).toBe(401);
   });
 
-  it("refreshes once and retries on a 401, then succeeds", async () => {
+  it("refreshes once and retries on a 401, then succeeds, caching the rotated CSRF token", async () => {
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
     mockFetch
       .mockResolvedValueOnce(new Response("{}", { status: 401 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ user_id: "u1" }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ user_id: "u1", csrf_token: "new-csrf" }), { status: 200 })
+      )
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
 
     const response = await apiFetch("/retrieval/query", { method: "POST" });
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(response.status).toBe(200);
+    expect(getStoredCsrfToken()).toBe("new-csrf");
+  });
+
+  it("refreshes once and retries on a 403 too, self-healing a session with a stale/missing CSRF token (ERP-116 hotfix)", async () => {
+    // Every session that logged in before this hotfix has valid auth cookies but no cached CSRF
+    // token at all -- this is what lets it recover automatically instead of forcing a re-login.
+    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    mockFetch
+      .mockResolvedValueOnce(new Response("{}", { status: 403 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ user_id: "u1", csrf_token: "healed-csrf" }), { status: 200 })
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const response = await apiFetch("/generation/query", { method: "POST" });
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(response.status).toBe(200);
+    expect(getStoredCsrfToken()).toBe("healed-csrf");
   });
 
   it("clears the stored user ID and fires SESSION_EXPIRED_EVENT when refresh also fails", async () => {

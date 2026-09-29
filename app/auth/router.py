@@ -85,9 +85,9 @@ def login(request: LoginRequest, response: Response) -> AuthActionResponse:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         ) from exc
-    set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
+    csrf_token = set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
     current_user = decode_access_token(tokens.access_token, settings)
-    return AuthActionResponse(user_id=current_user.id)
+    return AuthActionResponse(user_id=current_user.id, csrf_token=csrf_token)
 
 
 @router.post("/refresh")
@@ -112,9 +112,9 @@ def refresh(request: Request, response: Response) -> AuthActionResponse:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         ) from exc
-    set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
+    csrf_token = set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
     current_user = decode_access_token(tokens.access_token, settings)
-    return AuthActionResponse(user_id=current_user.id)
+    return AuthActionResponse(user_id=current_user.id, csrf_token=csrf_token)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -211,9 +211,9 @@ def oidc_callback(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         ) from exc
     response.delete_cookie(_OIDC_STATE_COOKIE, path=_OIDC_COOKIE_PATH)
-    set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
+    csrf_token = set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
     current_user = decode_access_token(tokens.access_token, settings)
-    return AuthActionResponse(user_id=current_user.id)
+    return AuthActionResponse(user_id=current_user.id, csrf_token=csrf_token)
 
 
 @admin_router.get("")

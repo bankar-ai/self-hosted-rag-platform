@@ -68,12 +68,24 @@ class TokenResponse(BaseModel):
 class AuthActionResponse(BaseModel):
     """Returned by `POST /auth/login`/`/refresh` in place of `TokenResponse` (ERP-116).
 
-    The actual tokens are now delivered as `httpOnly` cookies, never in the response body --
+    The access/refresh tokens are delivered as `httpOnly` cookies, never in this body.
     `user_id` is the one piece of (non-sensitive) identity data the frontend still needs
     synchronously, since it can no longer decode a JWT it never receives.
+
+    `csrf_token` is also returned here, not just as a cookie -- a real fix for a design bug
+    found live (2026-09-29): the double-submit pattern assumed frontend JS could read the
+    `csrf_token` cookie via `document.cookie` and echo it back as a header, but `document.cookie`
+    only ever exposes cookies belonging to the *current page's own origin*. Since the frontend
+    (Vercel) and this API are different origins, that cookie is permanently invisible to the
+    frontend's JS no matter what `SameSite`/`credentials` settings are used -- those govern
+    whether the cookie gets *attached* to outgoing requests, a separate mechanism from whether
+    script on another origin can *read* it. Returning the value here, in a response the frontend
+    already legitimately reads cross-origin (it's its own fetch call), is what actually lets the
+    frontend obtain a value to echo back at all.
     """
 
     user_id: uuid.UUID
+    csrf_token: str
 
 
 class UpdateUserActiveRequest(BaseModel):
