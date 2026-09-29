@@ -39,9 +39,17 @@ image = (
 app = modal.App(name="self-hosted-rag-platform-ollama", image=image)
 
 
-@app.cls(gpu="T4", scaledown_window=300)
+@app.cls(gpu="T4", scaledown_window=900)
 class OllamaServer:
-    """One container: runs `ollama serve`, exposed directly as a public HTTPS endpoint."""
+    """One container: runs `ollama serve`, exposed directly as a public HTTPS endpoint.
+
+    `scaledown_window=900` (15 min, raised from 300 -- ERP-114): since generation moved to
+    OpenRouter (ERP-106), this app serves embedding-only traffic, so it goes idle and cold-starts
+    more easily than when generation traffic also kept it warm. A longer window trades a small
+    amount of extra idle GPU-seconds (still well within the $30/mo free credit at this project's
+    traffic scale) for fewer repeat cold starts within an active session. `min_containers=1`
+    (true always-warm) was evaluated and rejected -- would exhaust the free credit in ~27 hours.
+    """
 
     @modal.web_server(port=11434, startup_timeout=60)
     def serve(self) -> None:
