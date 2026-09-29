@@ -827,6 +827,49 @@ Living summary of what exists in this repository right now. Update in place as s
   tsc/oxlint clean throughout. Merged to `develop` via PRs #71-#76, promoted to `main` and
   deployed live via PR #75 (PR #76's ticket-only filings not yet promoted as of this entry).
   Session log: `.ai/sessions/2026-09-27-erp100-109-ux-openrouter-security.md`.
+- **ERP-115/ERP-116 Done, live production CSRF hotfix shipped (2026-09-29)**: **ERP-115** adds
+  `duration_seconds` to `conversation_messages` (`GenerationService` wraps `time.monotonic()`
+  around each generation call), surfaced in the UI on hover only, persisted so it survives reload/
+  tab-switch. **ERP-116** replaces `localStorage`-held JWTs with `httpOnly` cookies (`app/auth/
+  cookies.py`) plus a CSRF double-submit pattern (`app/auth/dependencies.py`'s `verify_csrf`), an
+  absolute session cap (original `expires_at` now threaded through refresh-token rotation
+  unchanged, `app/auth/service.py`), and client-side idle timeout (`frontend/src/lib/
+  activityTracker.ts`, 30 min). Deployed backend (VM) + frontend (Vercel) together deliberately,
+  per `docs/deployment.md`'s new "Cookie-based auth" note.
+  **Live incident found immediately after deploy**: real users got `403` on every generated
+  request. Root cause: `document.cookie` is strictly same-origin, so the `csrf_token` cookie set
+  by the API's origin (the VM) was invisible to the frontend's JS on Vercel's different origin —
+  no `SameSite`/`credentials` setting fixes this, it's a browser platform rule curl-based
+  verification doesn't reproduce (curl can read any cookie in its jar regardless of origin, no
+  page-origin restriction the way `document.cookie` has). Fixed by having `/auth/login`/`/refresh`
+  return `csrf_token` in the JSON response body too (a same-origin-safe channel — it's just
+  reading the frontend's own fetch response) — cached client-side in `tokenStorage.ts` alongside
+  the user ID; `apiFetch`/`uploadWithProgress` also now retry on `403` (not just `401`), so an
+  already-broken live session self-heals via `/auth/refresh` without forcing a re-login. New
+  regression test in `tests/auth/test_router.py` asserts the body's `csrf_token` matches the
+  cookie's value — the exact case no prior test covered (`TestClient`'s cookie jar is
+  client-scoped and origin-unrestricted, unlike a real browser, which is why the original bug
+  shipped untested). Hotfixed via PR #92 (develop) → PR #93 (develop→main, merge commit
+  `6fc6aa1`).
+  **Second issue, same incident**: Vercel's GitHub webhook silently never fired for the `6fc6aa1`
+  push to `main` — confirmed via the Vercel dashboard's Deployments list (every other push, on any
+  branch, built within seconds; this one has no entry at all, not even a failed one) and via
+  `gh api repos/.../commits/{sha}/status` / `.../deployments?sha=...` both staying empty for 6+
+  minutes. Not a queuing delay, a dropped event (cause unconfirmed — GitHub's webhook-delivery log
+  for the installation would show whether GitHub sent it or Vercel's endpoint failed to ack it,
+  not checked). Worked around by pushing a trivial `--allow-empty` commit to `main` (`4df29fe`),
+  which got a fresh push event and built/deployed normally (`commits/4df29fe/status` shows
+  `Vercel` context, `"Deployment has completed"`). **If a `main` push ever again shows no Vercel
+  deployment after a couple minutes, this empty-commit retrigger is the fastest known fix** —
+  don't assume it'll resolve itself by waiting longer.
+  Live-verified end-to-end post-fix: real `register` → `login` (body `csrf_token` matches cookie
+  jar's) → `refresh` (using the body-returned token as the header) → `/auth/me`, all `200`/`201`
+  against the production API; separately confirmed the live JS bundle
+  (`index-C8k2toAV.js`, was `index-DI4mAw1m.js`) contains the `rag-csrf-token` string, proving the
+  new frontend build is what's actually serving. One throwaway verification user
+  (`verify-1790657242@example.com`) was left in production Postgres — deleting it via
+  `DELETE /admin/users/{id}` was blocked by the permission classifier mid-session; harmless
+  (unprivileged, unused), delete opportunistically later.
 
 **Still-open tickets from ERP-043's live UI review (2026-09-17)** — categorized per the new
 `Category` field convention (`.ai/tickets/README.md`), kept together here as the one place to
