@@ -2,6 +2,7 @@
  * the tokens themselves are httpOnly cookies, never in this body. */
 export interface AuthActionResponse {
   user_id: string;
+  csrf_token: string;
 }
 
 export interface UserResponse {

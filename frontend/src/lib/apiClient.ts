@@ -1,5 +1,6 @@
 import { isIdleTimedOut } from "./activityTracker";
-import { clearStoredUserId } from "./tokenStorage";
+import { clearStoredCsrfToken, clearStoredUserId, getStoredCsrfToken, setStoredCsrfToken } from "./tokenStorage";
+import type { AuthActionResponse } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 
@@ -8,7 +9,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 // re-checking auth state on the next full page load/remount.
 export const SESSION_EXPIRED_EVENT = "auth:session-expired";
 
-const CSRF_COOKIE = "csrf_token";
 const CSRF_HEADER = "X-CSRF-Token";
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // The token-issuing endpoints themselves -- excluded from apiFetch's refresh-and-retry dance
@@ -16,17 +16,19 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // benefit from a silent refresh-and-retry on an expired access token same as any other.
 const AUTH_TOKEN_ENDPOINTS = new Set(["/auth/login", "/auth/register", "/auth/refresh"]);
 
-/** Reads `csrf_token` straight from `document.cookie` -- deliberately not `httpOnly` (unlike
- * the access/refresh token cookies) specifically so this can read it fresh before every
- * mutating request, matching the backend's double-submit CSRF check. */
-function readCsrfToken(): string | null {
-  const match = document.cookie.match(new RegExp(`(?:^|; )${CSRF_COOKIE}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
+/**
+ * The CSRF token, read from `tokenStorage.ts`'s cache -- NOT from its own cookie (a real bug
+ * found live, 2026-09-29): `document.cookie` only ever exposes cookies belonging to the
+ * *current page's own origin*, and the `csrf_token` cookie is set by the API's origin, a
+ * different one from this frontend. `SameSite`/`credentials` settings control whether that
+ * cookie gets *attached* to an outgoing request, a separate browser mechanism from whether
+ * script on another origin can *read* it -- no combination of those settings makes it readable
+ * here. `/auth/login`/`/refresh` return the same value in their JSON body instead (see
+ * `AuthActionResponse`), which `login()`/`tryRefresh()` below cache via `setStoredCsrfToken`.
+ */
 function withCsrfHeader(method: string, headers: Headers): Headers {
   if (!MUTATING_METHODS.has(method.toUpperCase())) return headers;
-  const csrfToken = readCsrfToken();
+  const csrfToken = getStoredCsrfToken();
   if (csrfToken) headers.set(CSRF_HEADER, csrfToken);
   return headers;
 }
@@ -41,6 +43,7 @@ async function rawFetch(path: string, init: RequestInit): Promise<Response> {
 
 function expireSession(): void {
   clearStoredUserId();
+  clearStoredCsrfToken();
   window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
 }
 
@@ -58,24 +61,37 @@ async function tryRefresh(): Promise<boolean> {
     expireSession();
     return false;
   }
+  // Refresh rotates the CSRF token too -- cache the new value, or every request after the
+  // first refresh would echo a now-stale one and fail the CSRF check.
+  const body = (await response.json()) as AuthActionResponse;
+  setStoredCsrfToken(body.csrf_token);
   return true;
 }
 
 /**
- * Call the backend, sending the httpOnly auth cookies automatically. On a 401, refreshes the
- * token pair once and retries the original request; if refresh also fails, the session is
- * expired (see `expireSession`) and the 401 response is returned as-is for the caller to handle.
+ * Call the backend, sending the httpOnly auth cookies automatically. On a 401 *or* 403,
+ * refreshes the token pair once and retries the original request; if refresh also fails, the
+ * session is expired (see `expireSession`) and the original response is returned as-is for the
+ * caller to handle.
+ *
+ * 403 is included, not just 401 (ERP-116 hotfix, 2026-09-29): every session that logged in
+ * before this fix has valid auth cookies but no cached CSRF token at all (the bug this fix
+ * closes meant one was never handed to the frontend to cache), so it would otherwise 403 forever
+ * -- retrying via refresh mints a fresh CSRF token (now correctly returned and cached, see
+ * `tryRefresh`) and self-heals every already-broken session automatically, no forced re-login.
+ * A 403 for an unrelated reason (e.g. insufficient role) just retries once and gets the same
+ * 403 back -- harmless, not silently swallowed.
  *
  * Never attempts this dance for the token-issuing endpoints themselves (`AUTH_TOKEN_ENDPOINTS`,
- * ERP-116) -- a 401 from `/auth/login`/`/register`/`/refresh` is a direct, meaningful auth
- * failure (wrong password, an already-invalid refresh token, ...), not a stale-access-token
- * situation a refresh could fix. Previously this was implicit (no stored token yet meant
- * `tryRefresh` short-circuited before ever calling the network); now that tokens are invisible
- * httpOnly cookies, that check no longer exists client-side, so it has to be explicit here.
+ * ERP-116) -- a 401/403 from `/auth/login`/`/register`/`/refresh` is a direct, meaningful auth
+ * failure (wrong password, an already-invalid refresh token, ...), not a situation a refresh
+ * could fix. Previously the 401 case was implicit (no stored token yet meant `tryRefresh`
+ * short-circuited before ever calling the network); now that tokens are invisible httpOnly
+ * cookies, that check no longer exists client-side, so it has to be explicit here.
  */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const first = await rawFetch(path, init);
-  if (first.status !== 401 || AUTH_TOKEN_ENDPOINTS.has(path)) return first;
+  if ((first.status !== 401 && first.status !== 403) || AUTH_TOKEN_ENDPOINTS.has(path)) return first;
 
   const refreshed = await tryRefresh();
   if (!refreshed) return first;
@@ -94,7 +110,7 @@ function rawUpload(path: string, file: File, onProgress: (fraction: number) => v
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}${path}`);
     xhr.withCredentials = true;
-    const csrfToken = readCsrfToken();
+    const csrfToken = getStoredCsrfToken();
     if (csrfToken) xhr.setRequestHeader(CSRF_HEADER, csrfToken);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total);
@@ -126,7 +142,7 @@ export async function uploadWithProgress(
   onProgress: (fraction: number) => void
 ): Promise<UploadResult> {
   const first = await rawUpload(path, file, onProgress);
-  if (first.status !== 401) return first;
+  if (first.status !== 401 && first.status !== 403) return first;
 
   const refreshed = await tryRefresh();
   if (!refreshed) return first;
