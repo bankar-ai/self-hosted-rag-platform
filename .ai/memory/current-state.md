@@ -193,6 +193,48 @@ Living summary of what exists in this repository right now. Update in place as s
   live traffic (Modal/Ollama and OpenRouter) now get full Langfuse visibility, and the
   `response-quality` Evaluator now scores real production traffic too. Throwaway verification
   user deleted afterward via the `ERP-040` admin endpoint (`204`).
+- **ERP-113 and ERP-114 applied live (2026-09-28) but not yet merged**: fixed a missing
+  `RATE_LIMIT_REDIS_URL` on the live VM (rate limiting had silently never been enforced in
+  production) and raised Modal's `scaledown_window` 300s -> 900s (embedding-only traffic
+  cold-starting more often post-`ERP-106`). Both applied directly to the live VM/Modal at the
+  time. **PR #87 (`erp113-114-live-fixes` -> `develop`) is still open, unmerged** — the actual
+  fixes are live, but tracked git history doesn't reflect it yet. Housekeeping gap, not a
+  functional one; merge PR #87 next time it's convenient.
+- **ERP-115 (persisted, hover-reveal generation duration) and ERP-116 (session security
+  hardening) both Done, merged, and live-verified (2026-09-28/29)**: built together in one long
+  session following live-traffic latency investigation and a user-noticed "no timed logout" gap.
+  **ERP-115**: new `conversation_messages.duration_seconds` column (migration `f84f343bb1cb`),
+  end-to-end wall time measured via `time.monotonic()` in `generate()`/`generate_stream()`,
+  threaded through `GenerationResponse`/the `"done"` SSE event/`GET /conversations/{id}`, shown
+  in the UI as a `title`-tooltip hover-reveal (not an always-visible caption, deliberately, so as
+  not to draw attention to slow answers on a live demo). **ERP-116**: absolute session cap
+  (refresh-token rotation now preserves the *original* session's expiry instead of resetting it
+  every use), idle timeout (new `frontend/src/lib/activityTracker.ts`, 30 min of no real
+  interaction skips silent refresh and logs out), and the big one — `localStorage`/`Authorization`
+  header auth replaced with `httpOnly` cookies (new `app/auth/cookies.py`), which mandated adding
+  real CSRF protection (double-submit pattern) as a direct consequence of this deployment's
+  cross-origin topology (`SameSite=None` is required for Vercel-frontend/VM-backend to work at
+  all, and provides zero CSRF protection alone). Real bugs found and fixed during implementation,
+  not assumed away: `/auth/refresh`/`/auth/logout` don't route through `get_current_user` so
+  needed the CSRF check added explicitly too; `apiFetch`'s 401-refresh-retry logic used to be
+  implicitly skipped for `/auth/login` itself (no stored token pre-login) and needed an explicit
+  exclusion now that tokens are invisible to JS; `TestClient`'s cookie jar is client-scoped, not
+  request-scoped, so every two-identity test across `tests/auth/`, `tests/generation/`,
+  `tests/ingestion/`, and `tests/retrieval/` needed a second `TestClient` instance. Verified:
+  backend 620 passed/95.86% coverage, frontend 100 passed, ruff/mypy/tsc/oxlint/vite build all
+  clean. Merged to `develop` via PR #89, promoted to `main` via PR #90 (merge commit `219b1d9`,
+  2026-09-29). **Deployed live with backend and Vercel frontend coordinated deliberately** (not
+  staggered — an old frontend cannot authenticate against the new backend at all, and vice
+  versa): `deploy_vm.bat` run immediately after the `main` merge, Vercel's auto-deploy confirmed
+  `success` for the same commit via GitHub's commit-status API. **Live-verified end-to-end**
+  against the real public URLs: login returns only `user_id` in the body (no tokens), all three
+  cookies confirmed set, cookie-only auth works, a mutating request without `X-CSRF-Token`
+  correctly gets `403` and the same request with it succeeds and carries `duration_seconds` too
+  — both tickets confirmed working together in one real request. Also statically confirmed the
+  live Vercel JS bundle contains the new code (not a stale cached build). Throwaway verification
+  user deleted via `ERP-040`'s admin endpoint, itself exercised through the new cookie+CSRF flow.
+  Breaking change, accepted deliberately: every previously-logged-in user was signed out the
+  moment this deployed.
 
 ## Next Planned Work
 
