@@ -1,7 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { startActivityTracking } from "./activityTracker";
 import { apiFetch, SESSION_EXPIRED_EVENT } from "./apiClient";
-import { clearStoredUserId, getStoredUserId, setStoredUserId } from "./tokenStorage";
+import {
+  clearStoredCsrfToken,
+  clearStoredUserId,
+  getStoredUserId,
+  setStoredCsrfToken,
+  setStoredUserId,
+} from "./tokenStorage";
 import type { AuthActionResponse, UserResponse } from "./types";
 
 interface AuthContextValue {
@@ -81,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const body = (await response.json()) as AuthActionResponse;
     setStoredUserId(body.user_id);
+    setStoredCsrfToken(body.csrf_token);
     setIsAuthenticated(true);
     setUserId(body.user_id);
     void fetchCurrentUser();
@@ -104,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // user's intent to leave shouldn't wait on it.
     void apiFetch("/auth/logout", { method: "POST" });
     clearStoredUserId();
+    clearStoredCsrfToken();
     setIsAuthenticated(false);
     setUserId(null);
     setUser(null);

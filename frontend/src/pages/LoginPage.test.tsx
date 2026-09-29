@@ -23,10 +23,7 @@ describe("LoginPage", () => {
       }
       if (url.endsWith("/auth/login")) {
         return Promise.resolve(
-          new Response(
-            JSON.stringify({ access_token: "a", refresh_token: "b", token_type: "bearer" }),
-            { status: 200 }
-          )
+          new Response(JSON.stringify({ user_id: "u1", csrf_token: "csrf-abc" }), { status: 200 })
         );
       }
       return Promise.resolve(

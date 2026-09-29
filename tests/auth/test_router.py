@@ -75,6 +75,40 @@ def _stub_oidc_network(monkeypatch, claims: dict) -> None:
     monkeypatch.setattr(oidc, "verify_id_token", lambda id_token, metadata, settings, nonce: claims)
 
 
+def test_login_and_refresh_return_the_csrf_token_in_the_body_matching_the_cookie():
+    """Regression test for a real bug found live (2026-09-29), not caught by any existing test.
+
+    `client.cookies["csrf_token"]` (used throughout this file, and in every other router test
+    suite) is a TestClient convenience that reads ANY cookie regardless of which origin set it
+    -- unlike a real browser's `document.cookie`, which only ever exposes cookies belonging to
+    the *current page's own origin*. Since the frontend and this API are different origins in
+    production, a real browser's JS can never read the `csrf_token` cookie this way, no matter
+    what `SameSite`/`credentials` settings are used -- that's exactly why this bug shipped
+    undetected: every test in this file "worked" by reading a cookie a real frontend structurally
+    cannot read. The fix returns the same value in the response body instead (a channel the
+    frontend genuinely can read cross-origin), which is what this test actually asserts.
+    """
+    email = f"csrf-body-{uuid.uuid4()}@example.com"
+    password = "a-long-enough-password"
+    client.post("/auth/register", json={"email": email, "password": password})
+
+    login_response = client.post("/auth/login", json={"email": email, "password": password})
+    assert login_response.status_code == 200
+    login_csrf_token = login_response.json()["csrf_token"]
+    assert login_csrf_token
+    assert login_csrf_token == login_response.cookies["csrf_token"]
+
+    refresh_response = client.post(
+        "/auth/refresh", headers={"X-CSRF-Token": login_csrf_token}
+    )
+    assert refresh_response.status_code == 200
+    refresh_csrf_token = refresh_response.json()["csrf_token"]
+    assert refresh_csrf_token
+    # Refresh rotates the CSRF token too, same as the access/refresh tokens.
+    assert refresh_csrf_token != login_csrf_token
+    assert refresh_csrf_token == refresh_response.cookies["csrf_token"]
+
+
 def test_register_then_login_then_refresh_then_logout():
     register_response = client.post(
         "/auth/register",
