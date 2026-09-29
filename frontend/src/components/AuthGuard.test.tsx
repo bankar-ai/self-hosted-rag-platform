@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
-import { setTokens } from "../lib/tokenStorage";
+import { setStoredUserId } from "../lib/tokenStorage";
 import AuthGuard from "./AuthGuard";
 
 describe("AuthGuard", () => {
@@ -48,7 +48,7 @@ describe("AuthGuard", () => {
   });
 
   it("renders the protected content when authenticated", () => {
-    setTokens({ accessToken: "a", refreshToken: "b" });
+    setStoredUserId("u1");
 
     render(
       <MemoryRouter initialEntries={["/chat"]}>

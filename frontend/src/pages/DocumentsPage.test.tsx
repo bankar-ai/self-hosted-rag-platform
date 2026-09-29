@@ -4,18 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as apiClient from "../lib/apiClient";
 import { AuthProvider } from "../lib/AuthContext";
 import { getDocumentsStore } from "../lib/documentsStore";
-import { setTokens } from "../lib/tokenStorage";
+import { setStoredUserId } from "../lib/tokenStorage";
 import DocumentsPage from "./DocumentsPage";
-
-// `decodeAccessTokenPayload` (see ../lib/jwt.ts) requires a real header.payload.signature shape
-// to resolve a `sub` claim -- DocumentsPage reads `userId` from that claim and renders nothing
-// until it's present, so a plain non-JWT string like "a" would leave the page permanently blank
-// in this test. Build a decodable fake token the same way ../lib/jwt.test.ts does.
-function fakeToken(payload: Record<string, unknown>): string {
-  const base64url = (obj: Record<string, unknown>) =>
-    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `${base64url({ alg: "HS256" })}.${base64url(payload)}.fake-signature`;
-}
 
 function stubAuthAndEmptyDocuments(extra?: (url: string, init?: RequestInit) => Response | null) {
   vi.stubGlobal(
@@ -45,10 +35,7 @@ function stubAuthAndEmptyDocuments(extra?: (url: string, init?: RequestInit) => 
 describe("DocumentsPage", () => {
   beforeEach(() => {
     localStorage.clear();
-    setTokens({
-      accessToken: fakeToken({ sub: "u1", role: "user" }),
-      refreshToken: "b",
-    });
+    setStoredUserId("u1");
   });
 
   afterEach(() => {

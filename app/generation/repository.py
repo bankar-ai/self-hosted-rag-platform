@@ -116,12 +116,14 @@ def append_message(
     content: str,
     citations: list[dict[str, Any]] | None = None,
     retrieval_settings: dict[str, Any] | None = None,
+    duration_seconds: float | None = None,
 ) -> ConversationMessageRecord:
     """Append one message to `conversation_id`. Does not commit.
 
-    `citations` (ERP-080) and `retrieval_settings` (ERP-107) are only ever set for an
-    assistant turn -- a "user"-role message has nothing to cite and used no retrieval
-    settings of its own, so callers simply omit both (defaulting to `None`).
+    `citations` (ERP-080), `retrieval_settings` (ERP-107), and `duration_seconds` (ERP-115) are
+    only ever set for an assistant turn -- a "user"-role message has nothing to cite, used no
+    retrieval settings, and has no generation time of its own, so callers simply omit all three
+    (defaulting to `None`).
     """
     message = ConversationMessageRecord(
         id=uuid.uuid4(),
@@ -130,6 +132,7 @@ def append_message(
         content=content,
         citations=citations,
         retrieval_settings=retrieval_settings,
+        duration_seconds=duration_seconds,
     )
     session.add(message)
     session.flush()

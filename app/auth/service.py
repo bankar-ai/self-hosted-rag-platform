@@ -101,12 +101,26 @@ def register_user(email: str, password: str) -> UserRecord:
         return user
 
 
-def _issue_tokens(user: UserRecord, settings: AuthSettings) -> TokenResponse:
+def _issue_tokens(
+    user: UserRecord, settings: AuthSettings, session_expires_at: datetime | None = None
+) -> TokenResponse:
+    """Issue a fresh access + refresh token pair.
+
+    `session_expires_at` is the absolute-session-cap mechanism (ERP-116): omitted (the default,
+    used by `login`/`register`/OIDC login), a genuinely new session gets a fresh
+    `refresh_token_expire_days`-out expiry. Passed through by `refresh_access_token` as the
+    *original* session's unchanged expiry, this makes rotation extend the opaque token value
+    (still needed so a stolen, already-used token can't be replayed) without ever pushing the
+    session's total lifetime further out -- previously every rotation reset the clock to a
+    fresh `now + refresh_token_expire_days`, so an actively-used session never actually expired.
+    """
     session_factory = get_session_factory()
     access_token = create_access_token(user.id, user.role, settings)
     raw_refresh_token = generate_refresh_token()
     token_hash = hash_refresh_token(raw_refresh_token)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    expires_at = session_expires_at or (
+        datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    )
     with session_factory() as session:
         create_refresh_token(session, user.id, token_hash, expires_at)
         session.commit()
@@ -149,6 +163,12 @@ def refresh_access_token(
     then falls back to the authoritative Postgres check (missing, revoked, or expired
     all raise `InvalidRefreshTokenError`). Rotation revokes the presented token and
     caches that revocation with a TTL matching its remaining natural validity.
+
+    ERP-116: the new refresh token inherits the *presented* token's `expires_at` unchanged,
+    rather than resetting to a fresh `refresh_token_expire_days`-out expiry -- this is the
+    absolute session cap. An actively-used session still gets a working rotated token on every
+    request, but the session as a whole cannot outlive `refresh_token_expire_days` from the
+    original login no matter how often it's used.
     """
     settings = settings or get_auth_settings()
     revocation_cache = revocation_cache or get_default_revocation_cache()
@@ -174,12 +194,13 @@ def refresh_access_token(
         if not user.is_active:
             raise AccountDisabledError
 
-        remaining_ttl = max(0, int((_as_aware_utc(record.expires_at) - now).total_seconds()))
+        original_expires_at = _as_aware_utc(record.expires_at)
+        remaining_ttl = max(0, int((original_expires_at - now).total_seconds()))
         revoke_refresh_token(session, record)
         session.commit()
 
     revocation_cache.mark_revoked(token_hash, remaining_ttl)
-    return _issue_tokens(user, settings)
+    return _issue_tokens(user, settings, session_expires_at=original_expires_at)
 
 
 def logout(raw_refresh_token: str, revocation_cache: RevocationCache | None = None) -> None:

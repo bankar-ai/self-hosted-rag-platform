@@ -88,6 +88,13 @@ class GenerationResponse(BaseModel):
     citations: list[Citation]
     conversation_id: uuid.UUID | None = None
     assistant_message_id: uuid.UUID | None = None
+    duration_seconds: float = Field(
+        description=(
+            "End-to-end wall-clock time this answer took (ERP-115) -- rate limit check, "
+            "history load, query rewrite, retrieval, the LLM call, and persistence. Distinct "
+            "from any single LLM call's own latency (tracked separately in Langfuse/OTel)."
+        )
+    )
 
 
 class Message(BaseModel):
@@ -112,6 +119,14 @@ class Message(BaseModel):
             "The rerank/expand_sections/document_ids this assistant turn's generation call "
             "actually used (ERP-107) -- always `None` for a 'user'-role message and for any "
             "message persisted before this field existed."
+        ),
+    )
+    duration_seconds: float | None = Field(
+        default=None,
+        description=(
+            "End-to-end wall-clock time this assistant turn took to generate (ERP-115) -- "
+            "always `None` for a 'user'-role message and for any message persisted before "
+            "this field existed."
         ),
     )
 

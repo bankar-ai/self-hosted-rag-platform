@@ -65,16 +65,15 @@ class TokenResponse(BaseModel):
     token_type: Literal["bearer"] = "bearer"
 
 
-class RefreshRequest(BaseModel):
-    """A refresh-token rotation request."""
+class AuthActionResponse(BaseModel):
+    """Returned by `POST /auth/login`/`/refresh` in place of `TokenResponse` (ERP-116).
 
-    refresh_token: str
+    The actual tokens are now delivered as `httpOnly` cookies, never in the response body --
+    `user_id` is the one piece of (non-sensitive) identity data the frontend still needs
+    synchronously, since it can no longer decode a JWT it never receives.
+    """
 
-
-class LogoutRequest(BaseModel):
-    """A refresh-token revocation request."""
-
-    refresh_token: str
+    user_id: uuid.UUID
 
 
 class UpdateUserActiveRequest(BaseModel):

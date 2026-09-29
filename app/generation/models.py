@@ -47,6 +47,12 @@ class ConversationMessageRecord(Base):
     # after the fact which settings produced a given historical answer. Always `None` for a
     # "user"-role message and for any message persisted before this column existed.
     retrieval_settings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)
+    # ERP-115: end-to-end wall-clock time (rate limit -> history load -> rewrite -> retrieval ->
+    # generation -> persistence) the assistant's answer took, in seconds -- distinct from any
+    # per-LLM-call latency already tracked in Langfuse/OTel, this is the single number a user
+    # actually experienced waiting. Always `None` for a "user"-role message and for any message
+    # persisted before this column existed.
+    duration_seconds: Mapped[float | None] = mapped_column(default=None)
 
 
 class MessageFeedbackRecord(Base):
