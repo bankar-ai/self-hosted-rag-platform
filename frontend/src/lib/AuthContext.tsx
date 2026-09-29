@@ -1,15 +1,17 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { apiFetch } from "./apiClient";
-import { decodeAccessTokenPayload } from "./jwt";
-import { clearTokens, getTokens, setTokens } from "./tokenStorage";
-import type { TokenResponse, UserResponse } from "./types";
+import { startActivityTracking } from "./activityTracker";
+import { apiFetch, SESSION_EXPIRED_EVENT } from "./apiClient";
+import { clearStoredUserId, getStoredUserId, setStoredUserId } from "./tokenStorage";
+import type { AuthActionResponse, UserResponse } from "./types";
 
 interface AuthContextValue {
   isAuthenticated: boolean;
   /**
-   * Decoded straight from the stored access token (synchronous, no network round-trip) --
-   * this is what pages should use to scope per-user localStorage data. Never blocks: if a
-   * caller needs a user ID to render, it's available in the same render as `isAuthenticated`.
+   * The one piece of identity data stored client-side (ERP-116) -- previously decoded straight
+   * from the access token's JWT payload, but that token is now an `httpOnly` cookie invisible
+   * to this code by design. `/auth/login`/`/register`/`/refresh` return it explicitly in their
+   * JSON body instead. Never blocks: available synchronously in the same render as
+   * `isAuthenticated`, same guarantee the old JWT-decode version made.
    */
   userId: string | null;
   /**
@@ -25,15 +27,14 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function readUserIdFromStoredToken(): string | null {
-  const tokens = getTokens();
-  if (!tokens) return null;
-  return decodeAccessTokenPayload(tokens.accessToken)?.sub ?? null;
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => getTokens() !== null);
-  const [userId, setUserId] = useState<string | null>(() => readUserIdFromStoredToken());
+  // ERP-116: an optimistic initial guess -- a stored user ID means *some* session existed
+  // recently, not proof the httpOnly cookies are still valid (they may have naturally expired,
+  // or a stale marker could survive a hard-crash without ever calling `logout()`). Corrected
+  // reactively the moment the first real request either succeeds or exhausts `apiFetch`'s
+  // refresh attempt and fires SESSION_EXPIRED_EVENT (see the effect below).
+  const [isAuthenticated, setIsAuthenticated] = useState(() => getStoredUserId() !== null);
+  const [userId, setUserId] = useState<string | null>(() => getStoredUserId());
   const [user, setUser] = useState<UserResponse | null>(null);
 
   async function fetchCurrentUser(): Promise<void> {
@@ -47,13 +48,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // Resolves the full profile on a hard page reload (tokens already in localStorage, but the
-  // `user` object itself was never persisted -- avoids storing profile data that could go
-  // stale relative to the backend).
+  // Resolves the full profile on a hard page reload (a user ID marker already in localStorage,
+  // but the `user` object itself was never persisted -- avoids storing profile data that could
+  // go stale relative to the backend).
   useEffect(() => {
     if (isAuthenticated) void fetchCurrentUser();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ERP-116: idle-timeout tracking only matters once actually logged in (the login page itself
+  // has nothing to time out). `apiClient.ts`'s `tryRefresh` fires SESSION_EXPIRED_EVENT the
+  // moment it gives up on the session (idle timeout, or a genuinely failed refresh) -- without
+  // this listener, `isAuthenticated` would only update on the next full remount, leaving stale
+  // UI up instead of redirecting to /login immediately.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    startActivityTracking();
+    const onSessionExpired = () => logout();
+    window.addEventListener(SESSION_EXPIRED_EVENT, onSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onSessionExpired);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   async function login(email: string, password: string): Promise<void> {
     const response = await apiFetch("/auth/login", {
@@ -64,10 +79,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!response.ok) {
       throw new Error("Invalid email or password");
     }
-    const tokens = (await response.json()) as TokenResponse;
-    setTokens({ accessToken: tokens.access_token, refreshToken: tokens.refresh_token });
+    const body = (await response.json()) as AuthActionResponse;
+    setStoredUserId(body.user_id);
     setIsAuthenticated(true);
-    setUserId(decodeAccessTokenPayload(tokens.access_token)?.sub ?? null);
+    setUserId(body.user_id);
     void fetchCurrentUser();
   }
 
@@ -84,7 +99,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout(): void {
-    clearTokens();
+    // Best-effort: revokes the refresh token server-side and clears the cookies. Client state
+    // (below) updates immediately regardless of whether this network call succeeds, since the
+    // user's intent to leave shouldn't wait on it.
+    void apiFetch("/auth/logout", { method: "POST" });
+    clearStoredUserId();
     setIsAuthenticated(false);
     setUserId(null);
     setUser(null);

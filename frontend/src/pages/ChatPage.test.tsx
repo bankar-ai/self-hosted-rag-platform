@@ -2,16 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../lib/AuthContext";
-import { setTokens } from "../lib/tokenStorage";
+import { setStoredUserId } from "../lib/tokenStorage";
 import ChatPage from "./ChatPage";
-
-// See DocumentsPage.test.tsx for why a decodable fake JWT is needed (ChatPage reads `userId`
-// from the token's `sub` claim).
-function fakeToken(payload: Record<string, unknown>): string {
-  const base64url = (obj: Record<string, unknown>) =>
-    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `${base64url({ alg: "HS256" })}.${base64url(payload)}.fake-signature`;
-}
 
 function sseResponse(chunks: string[], delayMs = 0): Response {
   const encoder = new TextEncoder();
@@ -68,7 +60,7 @@ function stubChatFetch(
 describe("ChatPage", () => {
   beforeEach(() => {
     localStorage.clear();
-    setTokens({ accessToken: fakeToken({ sub: "u1", role: "user" }), refreshToken: "b" });
+    setStoredUserId("u1");
     // jsdom doesn't implement scrollIntoView (used by ChatPage's ERP-064 auto-scroll effect).
     Element.prototype.scrollIntoView = vi.fn();
   });
@@ -384,6 +376,30 @@ describe("ChatPage", () => {
     // footer citation list's own numbering, not the inline marker already covered above.
     expect(await screen.findByText("[3] doc.pdf, p. 1")).toBeInTheDocument();
     expect(screen.queryByText("[1] doc.pdf, p. 1")).not.toBeInTheDocument();
+  });
+
+  it("shows generation duration as a hover tooltip once the answer completes (ERP-115)", async () => {
+    stubChatFetch(() =>
+      sseResponse([
+        'event: token\ndata: {"text": "answer"}\n\n',
+        'event: citations\ndata: {"citations": []}\n\n',
+        'event: done\ndata: {"conversation_id": "c1", "assistant_message_id": "m1", "duration_seconds": 3.456}\n\n',
+      ])
+    );
+
+    render(
+      <AuthProvider>
+        <ChatPage />
+      </AuthProvider>
+    );
+
+    const input = await screen.findByPlaceholderText(/ask a question/i);
+    await userEvent.type(input, "What does the doc say?");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    // Hover-reveal (ERP-115) -- not an always-visible caption, a `title` tooltip that only
+    // shows on hover, so as not to draw attention to slow answers on a live demo.
+    expect(await screen.findByTitle("Generated in 3.5s")).toBeInTheDocument();
   });
 
   describe("ERP-096: recovering an answer this browser never saw arrive live", () => {

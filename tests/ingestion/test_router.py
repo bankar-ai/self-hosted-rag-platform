@@ -15,6 +15,19 @@ client = TestClient(app)
 _PDF_MAGIC = b"%PDF-"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cookie_jar():
+    """Clear the shared `client`'s cookie jar before/after each test (ERP-116).
+
+    Cookie-based auth is client-scoped, not request-scoped like the old Authorization header
+    was -- without this, a session left on `client` by one test could silently authenticate a
+    later test that never logged in itself.
+    """
+    client.cookies.clear()
+    yield
+    client.cookies.clear()
+
+
 @pytest.fixture
 def auth_headers():
     return register_and_login(client, "ingestion")
@@ -353,8 +366,11 @@ def test_delete_document_404_for_document_belonging_to_another_user(simple_text_
     final = _poll_until_done(upload.json()["job_id"], auth_headers)
     document_id = final["result"]["document_id"]
 
-    other_user_headers = register_and_login(client, "ingestion-delete-other-owner")
-    response = client.delete(f"/documents/{document_id}", headers=other_user_headers)
+    # ERP-116: cookie-based auth is client-scoped -- the second identity needs its own
+    # TestClient, or it would overwrite `client`'s cookies (auth_headers' owner) with its own.
+    other_client = TestClient(app)
+    other_user_headers = register_and_login(other_client, "ingestion-delete-other-owner")
+    response = other_client.delete(f"/documents/{document_id}", headers=other_user_headers)
 
     assert response.status_code == 404
     still_listed = client.get("/documents", headers=auth_headers)

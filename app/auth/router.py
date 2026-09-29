@@ -3,22 +3,23 @@
 import uuid
 from typing import cast
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from app.auth.dependencies import get_current_user, require_role
+from app.auth.config import get_auth_settings
+from app.auth.cookies import REFRESH_TOKEN_COOKIE, clear_auth_cookies, set_auth_cookies
+from app.auth.dependencies import get_current_user, require_role, verify_csrf
 from app.auth.oidc import InvalidOidcStateError, OidcTokenExchangeError, OidcTokenValidationError
 from app.auth.schemas import (
+    AuthActionResponse,
     CurrentUser,
     LoginRequest,
-    LogoutRequest,
-    RefreshRequest,
     RegisterRequest,
     Role,
-    TokenResponse,
     UpdateUserActiveRequest,
     UserResponse,
 )
+from app.auth.security import decode_access_token
 from app.auth.service import (
     AccountDisabledError,
     CannotDeleteSelfError,
@@ -67,10 +68,15 @@ def register(request: RegisterRequest) -> UserResponse:
 
 
 @router.post("/login")
-def login(request: LoginRequest) -> TokenResponse:
-    """Exchange email + password for an access + refresh token pair."""
+def login(request: LoginRequest, response: Response) -> AuthActionResponse:
+    """Exchange email + password for an access + refresh token pair.
+
+    ERP-116: the tokens themselves are set as `httpOnly` cookies on `response`, never returned
+    in the body -- only the (non-sensitive) `user_id` the frontend still needs synchronously.
+    """
+    settings = get_auth_settings()
     try:
-        return login_user(request.email, request.password)
+        tokens = login_user(request.email, request.password, settings)
     except InvalidCredentialsError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
@@ -79,13 +85,25 @@ def login(request: LoginRequest) -> TokenResponse:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         ) from exc
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
+    current_user = decode_access_token(tokens.access_token, settings)
+    return AuthActionResponse(user_id=current_user.id)
 
 
 @router.post("/refresh")
-def refresh(request: RefreshRequest) -> TokenResponse:
-    """Rotate a refresh token for a new access + refresh token pair."""
+def refresh(request: Request, response: Response) -> AuthActionResponse:
+    """Rotate the `refresh_token` cookie for a new access + refresh token pair (ERP-116).
+
+    Previously took the refresh token in the request body; now reads it from the `httpOnly`
+    cookie `POST /auth/login` set, matching every other cookie-authenticated endpoint.
+    """
+    settings = get_auth_settings()
+    raw_refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+    if not raw_refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    verify_csrf(request)
     try:
-        return refresh_access_token(request.refresh_token)
+        tokens = refresh_access_token(raw_refresh_token, settings)
     except InvalidRefreshTokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
@@ -94,12 +112,19 @@ def refresh(request: RefreshRequest) -> TokenResponse:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         ) from exc
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
+    current_user = decode_access_token(tokens.access_token, settings)
+    return AuthActionResponse(user_id=current_user.id)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(request: LogoutRequest) -> None:
-    """Revoke a refresh token."""
-    logout_user(request.refresh_token)
+def logout(request: Request, response: Response) -> None:
+    """Revoke the caller's refresh token (from its cookie) and clear all auth cookies."""
+    raw_refresh_token = request.cookies.get(REFRESH_TOKEN_COOKIE)
+    if raw_refresh_token:
+        verify_csrf(request)
+        logout_user(raw_refresh_token)
+    clear_auth_cookies(response, get_auth_settings())
 
 
 @router.get("/me")
@@ -149,16 +174,21 @@ def oidc_callback(
     state: str,
     response: Response,
     oidc_state_cookie: str | None = Cookie(default=None, alias=_OIDC_STATE_COOKIE),
-) -> TokenResponse:
+) -> AuthActionResponse:
     """Complete an OIDC login: exchange `code`, verify the ID token, and issue tokens.
 
-    Returns the same `access_token`/`refresh_token` pair `POST /auth/login` returns — this is an
-    API-only backend with no frontend to redirect back to. The `oidc_state` cookie set by
-    `GET /auth/oidc/{provider}/login` is required; it's cleared here on success (FastAPI drops
-    `Response` header mutations made before a raised `HTTPException`, so it can't also be cleared
-    on the error paths below -- those rely on the cookie's own short `Max-Age` instead, which is
-    no weaker: the underlying authorization `code` is single-use at the IdP regardless).
+    Sets the same `httpOnly` cookies `POST /auth/login` does (ERP-116) -- previously returned
+    the raw `access_token`/`refresh_token` pair in the JSON body, but since `get_current_user`
+    now reads only the cookie, a JSON-only token here would have been silently unusable against
+    every other endpoint. No frontend calls this yet (see docs/deployment.md), but keeping every
+    token-issuing endpoint on the same delivery mechanism avoids a half-migrated, quietly-broken
+    path. The `oidc_state` cookie set by `GET /auth/oidc/{provider}/login` is required; it's
+    cleared here on success (FastAPI drops `Response` header mutations made before a raised
+    `HTTPException`, so it can't also be cleared on the error paths below -- those rely on the
+    cookie's own short `Max-Age` instead, which is no weaker: the underlying authorization
+    `code` is single-use at the IdP regardless).
     """
+    settings = get_auth_settings()
     try:
         tokens = complete_oidc_login(provider, code, state, oidc_state_cookie)
     except OidcNotConfiguredError as exc:
@@ -181,7 +211,9 @@ def oidc_callback(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled"
         ) from exc
     response.delete_cookie(_OIDC_STATE_COOKIE, path=_OIDC_COOKIE_PATH)
-    return tokens
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token, settings)
+    current_user = decode_access_token(tokens.access_token, settings)
+    return AuthActionResponse(user_id=current_user.id)
 
 
 @admin_router.get("")

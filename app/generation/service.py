@@ -5,6 +5,7 @@ import logging
 import queue
 import re
 import threading
+import time
 import uuid
 from typing import Any, Iterator
 
@@ -190,23 +191,39 @@ def generate(
     cached `GenerationSettings` and the configured `LLMClient` built from it (ERP-106).
     """
     settings = settings or get_generation_settings()
+    start = time.monotonic()
 
     if conversation_id is None:
         if _GREETING_RE.match(query):
-            return GenerationResponse(answer=GREETING_ANSWER, citations=[], conversation_id=None)
+            return GenerationResponse(
+                answer=GREETING_ANSWER,
+                citations=[],
+                conversation_id=None,
+                duration_seconds=time.monotonic() - start,
+            )
 
         chunks = retrieval_search(
             query, top_k, owner_id, rerank=rerank, expand_sections=expand_sections, document_ids=document_ids
         )
         if not chunks:
-            return GenerationResponse(answer=NO_CONTEXT_ANSWER, citations=[], conversation_id=None)
+            return GenerationResponse(
+                answer=NO_CONTEXT_ANSWER,
+                citations=[],
+                conversation_id=None,
+                duration_seconds=time.monotonic() - start,
+            )
 
         llm_client = llm_client or get_default_llm_client(settings)
         user_prompt, included_chunks = build_prompt(query, chunks, settings.max_context_chars)
         answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
         check_output_guardrail(answer, conversation_id=None, message_id=None)
         citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
-        return GenerationResponse(answer=answer, citations=citations, conversation_id=None)
+        return GenerationResponse(
+            answer=answer,
+            citations=citations,
+            conversation_id=None,
+            duration_seconds=time.monotonic() - start,
+        )
 
     session_factory = get_session_factory()
 
@@ -248,6 +265,8 @@ def generate(
             answer = llm_client.generate(SYSTEM_PROMPT, user_prompt)
             citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
 
+    duration_seconds = time.monotonic() - start
+
     with session_factory() as write_session:
         get_or_create_conversation(write_session, conversation_id, owner_id)
         append_message(write_session, conversation_id, "user", query)
@@ -258,6 +277,7 @@ def generate(
             answer,
             citations=[c.model_dump() for c in citations],
             retrieval_settings=_retrieval_settings_dict(rerank, expand_sections, document_ids),
+            duration_seconds=duration_seconds,
         )
         write_session.commit()
 
@@ -268,6 +288,7 @@ def generate(
         citations=citations,
         conversation_id=conversation_id,
         assistant_message_id=assistant_record.id,
+        duration_seconds=duration_seconds,
     )
 
 
@@ -302,11 +323,12 @@ def generate_stream(
     """
     try:
         settings = settings or get_generation_settings()
+        start = time.monotonic()
         if conversation_id is None:
             if _GREETING_RE.match(query):
                 yield "token", {"text": GREETING_ANSWER}
                 yield "citations", {"citations": []}
-                yield "done", {"conversation_id": None}
+                yield "done", {"conversation_id": None, "duration_seconds": time.monotonic() - start}
                 return
 
             chunks = retrieval_search(
@@ -320,7 +342,7 @@ def generate_stream(
             if not chunks:
                 yield "token", {"text": NO_CONTEXT_ANSWER}
                 yield "citations", {"citations": []}
-                yield "done", {"conversation_id": None}
+                yield "done", {"conversation_id": None, "duration_seconds": time.monotonic() - start}
                 return
 
             llm_client = llm_client or get_default_llm_client(settings)
@@ -333,7 +355,7 @@ def generate_stream(
             check_output_guardrail(answer, conversation_id=None, message_id=None)
             citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
             yield "citations", {"citations": [c.model_dump() for c in citations]}
-            yield "done", {"conversation_id": None}
+            yield "done", {"conversation_id": None, "duration_seconds": time.monotonic() - start}
             return
 
         session_factory = get_session_factory()
@@ -376,6 +398,7 @@ def generate_stream(
                 document_ids,
                 history,
                 event_queue,
+                start,
             ),
             daemon=True,
         )
@@ -403,6 +426,7 @@ def _run_stateful_generation(
     document_ids: list[str] | None,
     history: list[ConversationTurn],
     event_queue: "queue.Queue[tuple[str, dict[str, Any]] | None]",
+    start: float,
 ) -> None:
     """Runs rewrite/retrieval/generation and persists the assistant's reply.
 
@@ -458,6 +482,8 @@ def _run_stateful_generation(
                 citations = _citations_for(_cited_chunks(answer, included_chunks), reranked=rerank)
                 event_queue.put(("citations", {"citations": [c.model_dump() for c in citations]}))
 
+        duration_seconds = time.monotonic() - start
+
         with session_factory() as write_session:
             assistant_record = append_message(
                 write_session,
@@ -466,6 +492,7 @@ def _run_stateful_generation(
                 answer,
                 citations=[c.model_dump() for c in citations],
                 retrieval_settings=_retrieval_settings_dict(rerank, expand_sections, document_ids),
+                duration_seconds=duration_seconds,
             )
             write_session.commit()
 
@@ -477,6 +504,7 @@ def _run_stateful_generation(
                 {
                     "conversation_id": str(conversation_id),
                     "assistant_message_id": str(assistant_record.id),
+                    "duration_seconds": duration_seconds,
                 },
             )
         )
@@ -517,6 +545,7 @@ def get_conversation_history(
             feedback=feedback_by_message_id.get(record.id),
             citations=[Citation(**c) for c in (record.citations or [])],
             retrieval_settings=record.retrieval_settings,
+            duration_seconds=record.duration_seconds,
         )
         for record in records
     ]

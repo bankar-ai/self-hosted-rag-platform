@@ -1,7 +1,7 @@
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: "bearer";
+/** ERP-116: what /auth/login, /auth/register (via login), and /auth/refresh return now --
+ * the tokens themselves are httpOnly cookies, never in this body. */
+export interface AuthActionResponse {
+  user_id: string;
 }
 
 export interface UserResponse {
@@ -118,6 +118,9 @@ export interface ConversationMessage {
    * used (ERP-107) -- `null` for a user-role message or one persisted before this field
    * existed. Not currently rendered anywhere in the UI. */
   retrieval_settings: Record<string, unknown> | null;
+  /** End-to-end wall-clock time this assistant turn took to generate, in seconds (ERP-115) --
+   * `null` for a user-role message or one persisted before this field existed. */
+  duration_seconds: number | null;
 }
 
 export interface ConversationHistoryResponse {
